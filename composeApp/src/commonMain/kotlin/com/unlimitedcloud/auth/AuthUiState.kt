@@ -15,7 +15,12 @@ sealed interface AuthUiState {
 
     data class WaitingForPassword(val hint: String) : AuthUiState
 
-    data class Ready(val userId: Long) : AuthUiState
+    data class Ready(
+        val userId: Long,
+        val displayName: String = "",
+        val username: String? = null,
+        val phoneNumber: String? = null,
+    ) : AuthUiState
 
     data object LoggingOut : AuthUiState
 

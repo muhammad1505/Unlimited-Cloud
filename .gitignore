@@ -39,3 +39,6 @@ androidApp/src/main/jniLibs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Python bytecode left behind by scripts/
+__pycache__/

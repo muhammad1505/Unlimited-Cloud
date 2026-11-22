@@ -8,6 +8,7 @@ import com.unlimitedcloud.log.platformLog
 import com.unlimitedcloud.platform.PlatformStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,6 +19,7 @@ import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -28,6 +30,8 @@ import kotlinx.serialization.json.put
  *
  * Updates are collected in a coroutine separate from the transport receive loop,
  * so the handlers may suspend on [TdJsonSession.call] without stalling updates.
+ * Recoverable request errors are exposed separately from the auth step, which
+ * lets the UI keep the typed phone number/code/password on screen.
  */
 class TdLibTelegramEngine(
     private val session: TdJsonSession,
@@ -38,7 +42,14 @@ class TdLibTelegramEngine(
     private val state = MutableStateFlow<AuthUiState>(AuthUiState.Initializing)
     override val authState: StateFlow<AuthUiState> = state.asStateFlow()
 
+    private val errorState = MutableStateFlow<String?>(null)
+    override val errorMessage: StateFlow<String?> = errorState.asStateFlow()
+
+    private val busyState = MutableStateFlow(false)
+    override val busy: StateFlow<Boolean> = busyState.asStateFlow()
+
     private var collector: Job? = null
+    private var watchdog: Job? = null
 
     override fun start() {
         if (collector != null) return
@@ -46,12 +57,30 @@ class TdLibTelegramEngine(
         collector = scope.launch {
             session.updates.collect { update -> handle(update) }
         }
+        // Without natives or network TDLib stays silent forever. Surface a
+        // recoverable failure instead of an endless splash screen; a later
+        // authorization update still replaces it automatically.
+        watchdog = scope.launch {
+            delay(INITIALIZATION_TIMEOUT_MILLIS)
+            if (state.value is AuthUiState.Initializing) {
+                state.value = AuthUiState.Failure(
+                    "Mesin Telegram belum merespons. Periksa koneksi internet, " +
+                        "lalu tutup dan buka kembali aplikasi.",
+                )
+            }
+        }
     }
 
     override fun stop() {
         collector?.cancel()
         collector = null
+        watchdog?.cancel()
+        watchdog = null
         session.stop()
+    }
+
+    override fun clearError() {
+        errorState.value = null
     }
 
     override fun submitPhoneNumber(phoneNumber: String) {
@@ -86,9 +115,8 @@ class TdLibTelegramEngine(
             "updateAuthorizationState" ->
                 update["authorization_state"]?.jsonObject?.let { handleAuthorizationState(it) }
 
-            "error" -> state.value = AuthUiState.Failure(
-                update["message"]?.jsonPrimitive?.contentOrNull ?: "TDLib error",
-            )
+            "error" -> errorState.value =
+                update["message"]?.jsonPrimitive?.contentOrNull ?: "TDLib error"
         }
     }
 
@@ -113,16 +141,35 @@ class TdLibTelegramEngine(
                 hint = authorizationState["password_hint"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             )
 
-            "authorizationStateReady" -> state.value = AuthUiState.Ready(userId = currentUserId())
+            "authorizationStateReady" -> state.value = currentUser()
             "authorizationStateLoggingOut" -> state.value = AuthUiState.LoggingOut
             "authorizationStateClosing", "authorizationStateClosed" -> state.value = AuthUiState.Closed
         }
     }
 
-    private suspend fun currentUserId(): Long {
+    private suspend fun currentUser(): AuthUiState.Ready {
         val me = runCatching { session.call(buildJsonObject { put("@type", "getMe") }) }.getOrNull()
-            ?: return 0L
-        return me["id"]?.jsonPrimitive?.longOrNull ?: 0L
+            ?: return AuthUiState.Ready(userId = 0L)
+
+        val firstName = me["first_name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val lastName = me["last_name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val displayName = listOf(firstName, lastName)
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+        val activeUsername = me["usernames"]
+            ?.jsonObject
+            ?.get("active_usernames")
+            ?.jsonArray
+            ?.mapNotNull { it.jsonPrimitive.contentOrNull }
+            ?.firstOrNull()
+        val legacyUsername = me["username"]?.jsonPrimitive?.contentOrNull
+
+        return AuthUiState.Ready(
+            userId = me["id"]?.jsonPrimitive?.longOrNull ?: 0L,
+            displayName = displayName,
+            username = activeUsername ?: legacyUsername,
+            phoneNumber = me["phone_number"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        )
     }
 
     private suspend fun sendTdlibParameters() {
@@ -160,15 +207,25 @@ class TdLibTelegramEngine(
             builder()
         }
 
-        val response = runCatching { session.call(request) }.getOrElse {
-            state.value = AuthUiState.Failure(it.message ?: "TDLib tidak merespons")
-            return
-        }
+        busyState.value = true
+        try {
+            val response = runCatching { session.call(request) }.getOrElse { failure ->
+                errorState.value = failure.message ?: "TDLib tidak merespons"
+                return
+            }
 
-        if (response["@type"]?.jsonPrimitive?.contentOrNull == "error") {
-            state.value = AuthUiState.Failure(
-                response["message"]?.jsonPrimitive?.contentOrNull ?: "TDLib error",
-            )
+            if (response["@type"]?.jsonPrimitive?.contentOrNull == "error") {
+                errorState.value = response["message"]?.jsonPrimitive?.contentOrNull
+                    ?: "TDLib menolak permintaan"
+            } else {
+                errorState.value = null
+            }
+        } finally {
+            busyState.value = false
         }
+    }
+
+    private companion object {
+        const val INITIALIZATION_TIMEOUT_MILLIS = 20_000L
     }
 }

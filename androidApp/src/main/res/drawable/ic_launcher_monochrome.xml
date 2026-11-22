@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Single-colour mark for Android 13+ themed icons. The arrow is punched
+         out with evenOdd so it stays readable after the system tints it. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M39.92,66.8
+            C32.24,66.8 29.68,59.12 34.8,54.0
+            C35.44,46.32 42.48,41.2 50.16,43.76
+            C55.28,36.08 66.8,36.72 71.28,45.68
+            C78.96,46.32 82.8,53.36 79.6,59.76
+            C77.68,64.88 73.2,66.8 68.08,66.8 Z
+            M54,47.6
+            L62.96,57.2 L57.52,57.2 L57.52,64.24
+            L50.48,64.24 L50.48,57.2 L45.04,57.2 Z" />
+</vector>

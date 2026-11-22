@@ -69,7 +69,17 @@ class CloudFileRepository(private val session: TdJsonSession) {
         return CloudPage(files = files, nextFromMessageId = next)
     }
 
-    suspend fun upload(chatId: Long, localPath: String, folder: String?) {
+    /**
+     * Sends the document, then polls the file object until Telegram reports the
+     * remote copy as complete. `sendMessage` itself returns before the upload
+     * finishes, which used to make the UI claim success too early.
+     */
+    suspend fun upload(
+        chatId: Long,
+        localPath: String,
+        folder: String?,
+        onProgress: (Float?) -> Unit = {},
+    ) {
         val response = session.call(
             buildJsonObject {
                 put("@type", "sendMessage")
@@ -98,13 +108,32 @@ class CloudFileRepository(private val session: TdJsonSession) {
             },
         )
         requireOk(response)
+
+        val fileId = response["content"]
+            ?.jsonObject
+            ?.get("document")
+            ?.jsonObject
+            ?.get("document")
+            ?.jsonObject
+            ?.get("id")
+            ?.jsonPrimitive
+            ?.intOrNull
+
+        if (fileId == null) {
+            onProgress(1f)
+        } else {
+            awaitUploadComplete(fileId, onProgress)
+        }
     }
 
     /**
      * Requests the download and waits until TDLib reports the local copy complete.
      * The returned path points inside TDLib's files directory.
      */
-    suspend fun download(fileId: Int): String = withTimeout(DOWNLOAD_TIMEOUT_MILLIS) {
+    suspend fun download(
+        fileId: Int,
+        onProgress: (Float?) -> Unit = {},
+    ): String = withTimeout(DOWNLOAD_TIMEOUT_MILLIS) {
         session.call(
             buildJsonObject {
                 put("@type", "downloadFile")
@@ -129,6 +158,15 @@ class CloudFileRepository(private val session: TdJsonSession) {
             val local = file["local"]?.jsonObject
             val completed = local?.get("is_downloading_completed")?.jsonPrimitive?.booleanOrNull == true
             val candidate = local?.get("path")?.jsonPrimitive?.contentOrNull
+            val size = file["size"]?.jsonPrimitive?.longOrNull ?: 0L
+            val downloaded = local?.get("downloaded_size")?.jsonPrimitive?.longOrNull ?: 0L
+            onProgress(
+                if (size > 0L) {
+                    (downloaded.toFloat() / size.toFloat()).coerceIn(0f, 1f)
+                } else {
+                    null
+                },
+            )
 
             if (completed && !candidate.isNullOrBlank()) {
                 path = candidate
@@ -136,7 +174,58 @@ class CloudFileRepository(private val session: TdJsonSession) {
                 delay(POLL_INTERVAL_MILLIS)
             }
         }
+        onProgress(1f)
         path
+    }
+
+    suspend fun deleteMessages(chatId: Long, messageIds: List<Long>) {
+        if (messageIds.isEmpty()) return
+
+        val response = session.call(
+            buildJsonObject {
+                put("@type", "deleteMessages")
+                put("chat_id", chatId)
+                put(
+                    "message_ids",
+                    buildJsonArray {
+                        messageIds.forEach { add(it) }
+                    },
+                )
+                put("revoke", true)
+            },
+        )
+        requireOk(response)
+    }
+
+    private suspend fun awaitUploadComplete(fileId: Int, onProgress: (Float?) -> Unit) {
+        withTimeout(UPLOAD_TIMEOUT_MILLIS) {
+            while (true) {
+                val file = session.call(
+                    buildJsonObject {
+                        put("@type", "getFile")
+                        put("file_id", fileId)
+                    },
+                )
+                requireOk(file)
+
+                val size = file["size"]?.jsonPrimitive?.longOrNull ?: 0L
+                val remote = file["remote"]?.jsonObject
+                val uploaded = remote?.get("uploaded_size")?.jsonPrimitive?.longOrNull ?: 0L
+                onProgress(
+                    if (size > 0L) {
+                        (uploaded.toFloat() / size.toFloat()).coerceIn(0f, 1f)
+                    } else {
+                        null
+                    },
+                )
+
+                if (remote?.get("is_uploading_completed")?.jsonPrimitive?.booleanOrNull == true) {
+                    onProgress(1f)
+                    return@withTimeout
+                }
+                delay(PROGRESS_POLL_MILLIS)
+            }
+        }
     }
 
     private fun toFile(message: JsonObject): CloudFile? {
@@ -174,6 +263,8 @@ class CloudFileRepository(private val session: TdJsonSession) {
     private companion object {
         const val PAGE_SIZE = 50
         const val DOWNLOAD_TIMEOUT_MILLIS = 600_000L
+        const val UPLOAD_TIMEOUT_MILLIS = 900_000L
         const val POLL_INTERVAL_MILLIS = 750L
+        const val PROGRESS_POLL_MILLIS = 500L
     }
 }

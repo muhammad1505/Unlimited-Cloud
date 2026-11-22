@@ -4,6 +4,9 @@ actual object PlatformStorage {
     private val root: String
         get() = AndroidPlatform.requireContext().filesDir.absolutePath + "/unlimitedcloud"
 
+    actual val appDataDirectory: String
+        get() = "$root/app"
+
     actual val tdlibDatabaseDirectory: String
         get() = "$root/tdlib/db"
 
@@ -11,6 +14,7 @@ actual object PlatformStorage {
         get() = "$root/tdlib/files"
 
     actual fun ensureDirectories() {
+        java.io.File(appDataDirectory).mkdirs()
         java.io.File(tdlibDatabaseDirectory).mkdirs()
         java.io.File(tdlibFilesDirectory).mkdirs()
     }

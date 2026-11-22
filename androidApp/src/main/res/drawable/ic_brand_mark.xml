@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Rounded brand tile used by the pre-Android-12 launch window. -->
+    <path android:pathData="M32,8 H76 A24,24 0 0 1 100,32 V76 A24,24 0 0 1 76,100 H32 A24,24 0 0 1 8,76 V32 A24,24 0 0 1 32,8 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="100"
+                android:endY="100"
+                android:startX="8"
+                android:startY="8"
+                android:type="linear">
+                <item android:color="#FF4338CA" android:offset="0" />
+                <item android:color="#FF4F46E5" android:offset="0.5" />
+                <item android:color="#FF0891B2" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <path
+        android:pathData="M32,8 H76 A24,24 0 0 1 100,32 V76 A24,24 0 0 1 76,100 H32 A24,24 0 0 1 8,76 V32 A24,24 0 0 1 32,8 Z"
+        android:strokeColor="#2EFFFFFF"
+        android:strokeWidth="1.4" />
+
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M39.92,66.8
+            C32.24,66.8 29.68,59.12 34.8,54.0
+            C35.44,46.32 42.48,41.2 50.16,43.76
+            C55.28,36.08 66.8,36.72 71.28,45.68
+            C78.96,46.32 82.8,53.36 79.6,59.76
+            C77.68,64.88 73.2,66.8 68.08,66.8 Z" />
+
+    <path
+        android:fillColor="#FF312E81"
+        android:pathData="M54,47.6
+            L62.96,57.2 L57.52,57.2 L57.52,64.24
+            L50.48,64.24 L50.48,57.2 L45.04,57.2 Z" />
+</vector>
