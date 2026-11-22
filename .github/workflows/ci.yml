@@ -32,6 +32,11 @@ jobs:
       - name: Fast Kotlin Compile Check (Desktop)
         run: ./gradlew compileKotlinDesktop --stacktrace
 
+      # TDLib has no Android artifact on Maven Central, so the prebuilt JSON
+      # natives are downloaded (pinned version + checksum) into jniLibs.
+      - name: Fetch TDLib Android natives
+        run: bash scripts/fetch-tdlib-android.sh
+
       - name: Decode release keystore
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
@@ -52,6 +57,21 @@ jobs:
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew :androidApp:assembleRelease --stacktrace
+
+      # Guards against a silent regression: a build without libtdjson.so would
+      # install fine but fail at login on every device.
+      - name: Verify TDLib natives inside APK
+        run: |
+          APK=$(ls androidApp/build/outputs/apk/release/*.apk | head -1)
+          echo "Checking $APK"
+          unzip -l "$APK" | grep -E 'lib/(arm64-v8a|armeabi-v7a)/libtdjson\.so'
+          for abi in arm64-v8a armeabi-v7a; do
+            if ! unzip -l "$APK" | grep -q "lib/$abi/libtdjson.so"; then
+              echo "::error::lib/$abi/libtdjson.so is missing from the APK"
+              exit 1
+            fi
+          done
+          echo "Both TDLib ABIs are packaged"
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v7

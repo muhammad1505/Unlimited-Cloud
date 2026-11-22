@@ -8,7 +8,8 @@ import com.sun.jna.Pointer
  * Android transport backed by TDLib's JSON C API (`libtdjson.so`).
  *
  * JNA is used on Android for the same protocol as desktop. The native library is
- * expected at `composeApp/src/androidMain/jniLibs/<abi>/libtdjson.so`; without it
+ * expected at `androidApp/src/main/jniLibs/<abi>/libtdjson.so`, which
+ * `scripts/fetch-tdlib-android.sh` populates during the release build; without it
  * the client fails with a readable message instead of crashing the process.
  */
 actual fun createTdJsonClient(): TdJsonClient = AndroidTdJsonClient()
@@ -29,8 +30,8 @@ private object AndroidTdJsonLibrary {
     val instance: TdJsonLibrary by lazy {
         runCatching { Native.load("tdjson", TdJsonLibrary::class.java) }.getOrElse {
             error(
-                "libtdjson.so tidak ditemukan. Letakkan biner TDLib untuk tiap ABI di " +
-                    "composeApp/src/androidMain/jniLibs/<abi>/libtdjson.so lalu build ulang.",
+                "libtdjson.so tidak ditemukan. Jalankan scripts/fetch-tdlib-android.sh " +
+                    "untuk mengisi androidApp/src/main/jniLibs/<abi>/libtdjson.so lalu build ulang.",
             )
         }
     }

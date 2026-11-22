@@ -30,6 +30,9 @@ captures/
 *.iws
 .vscode/
 
+# TDLib Android natives are downloaded by scripts/fetch-tdlib-android.sh
+androidApp/src/main/jniLibs/
+
 # Native build output only (TDLib .so/.dll/.dylib bindings are committed)
 *.o
 *.class
