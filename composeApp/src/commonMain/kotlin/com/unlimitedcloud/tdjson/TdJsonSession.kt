@@ -1,5 +1,7 @@
 package com.unlimitedcloud.tdjson
 
+import com.unlimitedcloud.log.LOG_TAG
+import com.unlimitedcloud.log.platformLog
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +34,8 @@ import kotlinx.serialization.json.put
 class TdJsonSession(
     private val client: TdJsonClient,
     private val scope: CoroutineScope,
+    private val logTraffic: Boolean = true,
+    private val tdlibVerboseLevel: Int = 1,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -49,6 +53,13 @@ class TdJsonSession(
 
     fun start() {
         if (receiver != null) return
+        if (logTraffic) {
+            // TDLib's own log stays quiet by default; level 1 surfaces errors and
+            // warnings in logcat without flooding it. Raise to 5 for a full trace.
+            runCatching {
+                client.execute("""{"@type":"setLogVerboseLevel","new_verbose_level":$tdlibVerboseLevel}""")
+            }
+        }
         receiver = scope.launch(Dispatchers.Default) {
             while (isActive) {
                 // A missing or broken native library must not spin: back off before
@@ -59,8 +70,16 @@ class TdJsonSession(
                     delay(IDLE_RETRY_MILLIS)
                     continue
                 }
-                val update = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: continue
+                val update = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
+                if (update == null) {
+                    if (logTraffic) platformLog(LOG_TAG, "update tidak bisa di-parse: ${raw.take(120)}")
+                    continue
+                }
                 val extra = update["@extra"]?.jsonPrimitive?.contentOrNull
+                if (logTraffic) {
+                    val type = update["@type"]?.jsonPrimitive?.contentOrNull
+                    if (type != null && type !in QUIET_UPDATES) platformLog(LOG_TAG, "<- $type")
+                }
                 if (extra != null) {
                     val deferred = lock.withLock { pending.remove(extra) }
                     if (deferred != null) {
@@ -82,14 +101,20 @@ class TdJsonSession(
             put("@extra", JsonPrimitive(extra))
         }
         client.send(payload.toString())
+        if (logTraffic) platformLog(LOG_TAG, "-> ${request["@type"]?.jsonPrimitive?.contentOrNull}")
         return try {
-            withTimeout(timeoutMillis) { deferred.await() }
+            val response = withTimeout(timeoutMillis) { deferred.await() }
+            if (logTraffic && response["@type"]?.jsonPrimitive?.contentOrNull == "error") {
+                platformLog(LOG_TAG, "<- error: ${response["message"]?.jsonPrimitive?.contentOrNull}")
+            }
+            response
         } finally {
             lock.withLock { pending.remove(extra) }
         }
     }
 
     fun stop() {
+        if (logTraffic) platformLog(LOG_TAG, "sesi TDLib ditutup")
         receiver?.cancel()
         receiver = null
         client.close()
@@ -99,5 +124,8 @@ class TdJsonSession(
         const val RECEIVE_TIMEOUT_SECONDS = 1.0
         const val IDLE_RETRY_MILLIS = 250L
         const val DEFAULT_TIMEOUT_MILLIS = 20_000L
+
+        /** High-frequency progress updates would drown out everything else. */
+        val QUIET_UPDATES = setOf("updateFile")
     }
 }

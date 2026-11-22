@@ -3,6 +3,8 @@ package com.unlimitedcloud.tdjson
 import com.unlimitedcloud.auth.AuthUiState
 import com.unlimitedcloud.auth.TelegramEngine
 import com.unlimitedcloud.config.TelegramConfig
+import com.unlimitedcloud.log.LOG_TAG
+import com.unlimitedcloud.log.platformLog
 import com.unlimitedcloud.platform.PlatformStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -91,7 +93,9 @@ class TdLibTelegramEngine(
     }
 
     private suspend fun handleAuthorizationState(authorizationState: JsonObject) {
-        when (authorizationState["@type"]?.jsonPrimitive?.contentOrNull) {
+        val stateType = authorizationState["@type"]?.jsonPrimitive?.contentOrNull
+        platformLog(LOG_TAG, "auth: $stateType")
+        when (stateType) {
             "authorizationStateWaitTdlibParameters" -> sendTdlibParameters()
             "authorizationStateWaitPhoneNumber" -> state.value = AuthUiState.WaitingForPhoneNumber
             "authorizationStateWaitCode" -> {
