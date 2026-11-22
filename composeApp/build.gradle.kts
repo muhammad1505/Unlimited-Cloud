@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompilationTask
 
@@ -17,7 +18,7 @@ plugins {
 fun localProperty(key: String): String? {
     val file = rootProject.file("local.properties")
     if (!file.exists()) return null
-    return java.util.Properties().apply {
+    return Properties().apply {
         file.inputStream().use { load(it) }
     }.getProperty(key)
 }
@@ -81,8 +82,6 @@ kotlin {
     jvm("desktop")
 
     sourceSets {
-        commonMain.kotlin.srcDir(generatedTelegramDir)
-
         commonMain.dependencies {
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
@@ -120,6 +119,10 @@ kotlin {
         }
     }
 }
+
+// The generated credentials file is added outside the kotlin {} block because the
+// sourceSets accessors there resolve to the extension, not to the KotlinSourceSet.
+kotlin.sourceSets.getByName("commonMain").kotlin.srcDir(generatedTelegramDir)
 
 sqldelight {
     databases {
