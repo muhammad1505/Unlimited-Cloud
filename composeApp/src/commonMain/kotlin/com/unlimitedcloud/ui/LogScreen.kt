@@ -59,7 +59,7 @@ fun LogScreen(
 
             Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
                 Text(
-                    text = "Log diagnotik",
+                    text = "Log diagnostik",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
