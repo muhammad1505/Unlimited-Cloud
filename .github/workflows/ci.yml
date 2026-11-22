@@ -12,11 +12,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-verify:
+  # Build only. Produces the artifacts the other jobs consume.
+  build:
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
-    # Needed so a v* tag can publish a GitHub Release from this job.
-    permissions:
-      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -61,33 +60,6 @@ jobs:
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew :androidApp:assembleRelease --stacktrace
 
-      # Guards against a silent regression: a build without libtdjson.so would
-      # install fine but fail at login on every device. Also asserts the per-ABI
-      # split APKs stay one-architecture only.
-      - name: Verify release APKs
-        run: |
-          set -e
-          if ls androidApp/build/outputs/apk/release/*universal*.apk >/dev/null 2>&1; then
-            echo "::error::a universal APK was built; ABI splits must stay split"
-            exit 1
-          fi
-          for apk in androidApp/build/outputs/apk/release/*.apk; do
-            abi=$(basename "$apk")
-            case "$abi" in
-              *arm64-v8a*) abi=arm64-v8a ;;
-              *armeabi-v7a*) abi=armeabi-v7a ;;
-              *) echo "::error::cannot tell the ABI from $apk" ; exit 1 ;;
-            esac
-            natives=$(unzip -l "$apk" | grep -c 'libtdjson\.so' || true)
-            echo "$(basename "$apk"): $(du -h "$apk" | cut -f1), libtdjson.so x$natives"
-            unzip -l "$apk" | grep -E 'lib/.*\.so' | awk '{print "    " $4}'
-            if [ "$natives" -ne 1 ] || ! unzip -l "$apk" | grep -q "lib/$abi/libtdjson.so"; then
-              echo "::error::$apk must carry exactly lib/$abi/libtdjson.so"
-              exit 1
-            fi
-          done
-          echo "Per-ABI APKs carry their own TDLib natives"
-
       - name: Upload Release APK
         uses: actions/upload-artifact@v7
         with:
@@ -104,17 +76,125 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
-      # Pushing a v* tag publishes both per-ABI APKs as a GitHub Release.
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" \
-            androidApp/build/outputs/apk/release/*.apk \
-            --title "Unlimited Cloud $GITHUB_REF_NAME" \
-            --generate-notes
-
       - name: Remove keystore
         if: always()
         run: rm -f androidApp/release.keystore
+
+  # Verify only. Consumes the artifacts above and asserts what the APK must and
+  # must not contain; no Gradle invocation happens here.
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Release APK
+        uses: actions/download-artifact@v7
+        with:
+          name: unlimited-cloud-release-apk
+          path: dist
+
+      # Guards against a silent regression: a build without libtdjson.so would
+      # install fine but fail at login on every device. Also asserts the per-ABI
+      # split APKs stay one-architecture only.
+      - name: Verify release APKs
+        run: |
+          set -e
+          if ls dist/*universal*.apk >/dev/null 2>&1; then
+            echo "::error::a universal APK was built; ABI splits must stay split"
+            exit 1
+          fi
+          count=0
+          for apk in dist/*.apk; do
+            count=$((count + 1))
+            abi=$(basename "$apk")
+            case "$abi" in
+              *arm64-v8a*) abi=arm64-v8a ;;
+              *armeabi-v7a*) abi=armeabi-v7a ;;
+              *) echo "::error::cannot tell the ABI from $apk" ; exit 1 ;;
+            esac
+            natives=$(unzip -l "$apk" | grep -c 'libtdjson\.so' || true)
+            echo "$(basename "$apk"): $(du -h "$apk" | cut -f1), libtdjson.so x$natives"
+            unzip -l "$apk" | grep -E 'lib/.*\.so' | awk '{print "    " $4}'
+            if [ "$natives" -ne 1 ] || ! unzip -l "$apk" | grep -q "lib/$abi/libtdjson.so"; then
+              echo "::error::$apk must carry exactly lib/$abi/libtdjson.so"
+              exit 1
+            fi
+          done
+          echo "Per-ABI APKs carry their own TDLib natives"
+
+      - name: Verify signature and manifest permissions
+        run: |
+          set -e
+          for apk in dist/*.apk; do
+            if ! grep -aq 'APK Sig Block 42' "$apk"; then
+              echo "::error::$apk is not signed"
+              exit 1
+            fi
+            python3 - "$apk" <<'PY'
+          import re, sys, zipfile
+
+          apk = sys.argv[1]
+          data = zipfile.ZipFile(apk).read("AndroidManifest.xml")
+          found = set()
+          for encoding in ("latin-1", "utf-16-le"):
+              found |= set(re.findall(r"android\.permission\.[A-Z_]+", data.decode(encoding, errors="ignore")))
+          allowed = {"android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE"}
+          unexpected = sorted(found - allowed)
+          if unexpected:
+              sys.exit(f"{apk}: unexpected permissions: {', '.join(unexpected)}")
+          print(f"{apk}: permissions OK: {', '.join(sorted(found))}")
+          PY
+          done
+
+      - name: Verify the diagnostics screen is packaged
+        run: |
+          set -e
+          for apk in dist/*.apk; do
+            hits=$(unzip -p "$apk" 'classes*.dex' | grep -ac 'Log diagnostik' || true)
+            echo "$(basename "$apk"): 'Log diagnostik' x$hits"
+            if [ "$hits" -lt 1 ]; then
+              echo "::error::$apk does not contain the diagnostics screen"
+              exit 1
+            fi
+          done
+
+  # Tag only. Reuses the artifacts already built and verified for this commit on
+  # main instead of rebuilding the APK just to attach it to a release.
+  release:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Locate the verified build for this commit
+        id: find
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=30" \
+            --jq '[.workflow_runs[] | select(.head_branch == "main" and .conclusion == "success")] | sort_by(.created_at) | last | .databaseId')
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "::error::no successful main build for $GITHUB_SHA; merge to main and let CI finish before tagging"
+            exit 1
+          fi
+          echo "using artifacts from run $run_id"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download verified APKs
+        uses: actions/download-artifact@v7
+        with:
+          name: unlimited-cloud-release-apk
+          path: dist
+          run-id: ${{ steps.find.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/*.apk \
+            --title "Unlimited Cloud $GITHUB_REF_NAME" \
+            --generate-notes
