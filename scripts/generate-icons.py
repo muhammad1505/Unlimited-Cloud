@@ -8,8 +8,12 @@ or the mark geometry.
 
 Outputs:
   composeApp/src/desktopMain/resources/icon.png   (512 x 512, window icon)
-  androidApp/src/main/res/mipmap-xxxhdpi/ic_launcher.png        (192 x 192)
-  androidApp/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png  (192 x 192)
+  androidApp/src/main/res/mipmap-<density>/ic_launcher.png        (48…192 px)
+  androidApp/src/main/res/mipmap-<density>/ic_launcher_round.png  (48…192 px)
+
+The adaptive icon in mipmap-anydpi-v26 is a vector, but launchers, icon packs
+and app-info screens on some OEM builds still read the raster mipmap, so every
+bucketed density is generated instead of only xxxhdpi.
 """
 
 from __future__ import annotations
@@ -183,10 +187,26 @@ def write_png(path: Path, size: int, round_icon: bool = False) -> None:
     print(f"wrote {path.relative_to(ROOT)} ({size}x{size}, {len(png) // 1024} KB)")
 
 
+# Bucketed launcher densities and their raster edge length, matching Android's
+# mdpi..xxxhdpi scale (48 dp baseline).
+LAUNCHER_DENSITIES = (
+    ("mdpi", 48),
+    ("hdpi", 72),
+    ("xhdpi", 96),
+    ("xxhdpi", 144),
+    ("xxxhdpi", 192),
+)
+
+
 def main() -> None:
     write_png(ROOT / "composeApp/src/desktopMain/resources/icon.png", 512)
-    write_png(ROOT / "androidApp/src/main/res/mipmap-xxxhdpi/ic_launcher.png", 192)
-    write_png(ROOT / "androidApp/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png", 192, round_icon=True)
+    for density, size in LAUNCHER_DENSITIES:
+        write_png(ROOT / f"androidApp/src/main/res/mipmap-{density}/ic_launcher.png", size)
+        write_png(
+            ROOT / f"androidApp/src/main/res/mipmap-{density}/ic_launcher_round.png",
+            size,
+            round_icon=True,
+        )
 
 
 if __name__ == "__main__":
