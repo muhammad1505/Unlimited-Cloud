@@ -51,9 +51,12 @@ class TdJsonSession(
         if (receiver != null) return
         receiver = scope.launch(Dispatchers.Default) {
             while (isActive) {
+                // A missing or broken native library must not spin: back off before
+                // retrying so a device without libtdjson stays idle instead of
+                // flooding the log with exceptions.
                 val raw = runCatching { client.receive(RECEIVE_TIMEOUT_SECONDS) }.getOrNull()
                 if (raw == null) {
-                    delay(50)
+                    delay(IDLE_RETRY_MILLIS)
                     continue
                 }
                 val update = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: continue
@@ -94,6 +97,7 @@ class TdJsonSession(
 
     private companion object {
         const val RECEIVE_TIMEOUT_SECONDS = 1.0
+        const val IDLE_RETRY_MILLIS = 250L
         const val DEFAULT_TIMEOUT_MILLIS = 20_000L
     }
 }
