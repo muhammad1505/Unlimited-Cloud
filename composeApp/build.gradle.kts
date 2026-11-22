@@ -57,7 +57,6 @@ kotlin {
 
             // TDLib JNI wrapper (desktop targets). Native bundles are added per-OS
             // via the `tdlight-natives` classifiers when the engine is wired up.
-            implementation(platform(libs.tdlight.bom))
             implementation(libs.tdlight.java)
         }
     }

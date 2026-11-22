@@ -35,8 +35,7 @@ filekit-dialogs-compose = { module = "io.github.vinceglb:filekit-dialogs-compose
 
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 
-tdlight-bom = { module = "it.tdlight:tdlight-java-bom", version.ref = "tdlight" }
-tdlight-java = { module = "it.tdlight:tdlight-java" }
+tdlight-java = { module = "it.tdlight:tdlight-java", version.ref = "tdlight" }
 
 [plugins]
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
