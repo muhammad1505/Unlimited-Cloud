@@ -6,6 +6,10 @@ squircle, gradient, cloud and arrow are rasterised with the standard library
 only. Run `python3 scripts/generate-icons.py` after changing the brand palette
 or the mark geometry.
 
+Rendering is split into horizontal bands and farmed out to a process pool, since
+the per-sample math is the entire cost. Set `ICON_JOBS=1` to stay single-core
+(for example to keep the phone cool), or `ICON_JOBS=4` to cap the pool size.
+
 Outputs:
   composeApp/src/desktopMain/resources/icon.png   (512 x 512, window icon)
   androidApp/src/main/res/mipmap-<density>/ic_launcher.png        (48…192 px)
@@ -19,8 +23,10 @@ bucketed density is generated instead of only xxxhdpi.
 from __future__ import annotations
 
 import math
+import os
 import struct
 import zlib
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -147,11 +153,32 @@ def sample(x: float, y: float, round_icon: bool = False) -> tuple[int, int, int,
     return int(r + 0.5), int(g + 0.5), int(b + 0.5), 255
 
 
-def render(size: int, supersample: int = 2, round_icon: bool = False) -> bytes:
-    hi = size * supersample
-    step = 1.0 / hi
+# Rows per worker task: small enough to keep every core busy on a 48 px icon,
+# large enough that process hand-off stays a rounding error.
+ROW_CHUNK = 8
+
+
+def worker_count() -> int:
+    """Pool size, honouring ICON_JOBS so a phone host can cap the cores it lends."""
+    override = os.environ.get("ICON_JOBS", "").strip()
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            pass
+    return max(1, os.cpu_count() or 1)
+
+
+def render_band(job: tuple[int, int, bool, int, int]) -> tuple[int, bytes]:
+    """Renders rows [y0, y1) and returns them as raw scanlines.
+
+    Module level on purpose: worker processes have to be able to import it.
+    """
+    size, supersample, round_icon, y0, y1 = job
+    step = 1.0 / (size * supersample)
+    count = supersample * supersample
     rows: list[bytes] = []
-    for py in range(size):
+    for py in range(y0, y1):
         row = bytearray()
         for px in range(size):
             red = green = blue = alpha = 0
@@ -164,10 +191,26 @@ def render(size: int, supersample: int = 2, round_icon: bool = False) -> bytes:
                     green += sg
                     blue += sb
                     alpha += sa
-            count = supersample * supersample
             row += bytes((red // count, green // count, blue // count, alpha // count))
         rows.append(bytes(row))
-    return b"".join(b"\x00" + row for row in rows)
+    return y0, b"".join(b"\x00" + row for row in rows)
+
+
+def render(size: int, supersample: int = 2, round_icon: bool = False) -> bytes:
+    bands = [
+        (size, supersample, round_icon, y0, min(y0 + ROW_CHUNK, size))
+        for y0 in range(0, size, ROW_CHUNK)
+    ]
+    jobs = min(worker_count(), len(bands))
+
+    if jobs <= 1:
+        parts = [render_band(band) for band in bands]
+    else:
+        with ProcessPoolExecutor(max_workers=jobs) as pool:
+            parts = list(pool.map(render_band, bands))
+
+    parts.sort(key=lambda item: item[0])
+    return b"".join(chunk for _, chunk in parts)
 
 
 def write_png(path: Path, size: int, round_icon: bool = False) -> None:
