@@ -8,7 +8,6 @@ local.properties
 build/
 **/build/
 !gradle/wrapper/gradle-wrapper.jar
-gradlew.bat
 
 # Kotlin / KMP
 .kotlin/
