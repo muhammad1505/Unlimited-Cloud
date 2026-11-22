@@ -1,7 +1,7 @@
 [versions]
 kotlin = "2.4.21"
 composeMultiplatform = "1.12.2"
-agp = "8.10.1"
+agp = "9.5.2"
 coroutines = "1.11.0"
 serialization = "1.13.0"
 koin = "4.2.2"
@@ -11,7 +11,7 @@ filekit = "0.17.1"
 activityCompose = "1.13.0"
 tdlight = "3.5.9+td.1.8.68"
 
-androidCompileSdk = "36"
+androidCompileSdk = "37"
 androidMinSdk = "26"
 androidTargetSdk = "36"
 
