@@ -16,7 +16,9 @@ kotlin {
     jvmToolchain(17)
 
     android {
-        namespace = "com.unlimitedcloud"
+        // The public API package stays com.unlimitedcloud; the Android namespace only
+        // drives R/BuildConfig and must differ from the :androidApp module namespace.
+        namespace = "com.unlimitedcloud.shared"
         compileSdk = libs.versions.androidCompileSdk.get().toInt()
         minSdk = libs.versions.androidMinSdk.get().toInt()
     }
