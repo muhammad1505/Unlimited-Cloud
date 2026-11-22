@@ -5,6 +5,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -188,7 +189,7 @@ class CloudFileRepository(private val session: TdJsonSession) {
                 put(
                     "message_ids",
                     buildJsonArray {
-                        messageIds.forEach { add(it) }
+                        messageIds.forEach { add(JsonPrimitive(it)) }
                     },
                 )
                 put("revoke", true)
