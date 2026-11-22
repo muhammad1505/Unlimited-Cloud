@@ -3,6 +3,7 @@ package com.unlimitedcloud.cloud
 import com.unlimitedcloud.tdjson.TdJsonSession
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.JsonPrimitive
@@ -89,11 +90,22 @@ class CloudFileRepository(private val session: TdJsonSession) {
                     "input_message_content",
                     buildJsonObject {
                         put("@type", "inputMessageDocument")
+                        // inputMessageDocument.document is an InputDocument, not an
+                        // InputFile: passing inputFileLocal here makes TDLib fail with
+                        // the misleading "InputFile is not specified".
                         put(
                             "document",
                             buildJsonObject {
-                                put("@type", "inputFileLocal")
-                                put("path", localPath)
+                                put("@type", "inputDocument")
+                                put(
+                                    "document",
+                                    buildJsonObject {
+                                        put("@type", "inputFileLocal")
+                                        put("path", localPath)
+                                    },
+                                )
+                                put("thumbnail", JsonNull)
+                                put("added_sticker_file_ids", buildJsonArray { })
                             },
                         )
                         put(
