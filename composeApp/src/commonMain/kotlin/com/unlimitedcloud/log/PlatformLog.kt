@@ -16,6 +16,9 @@ expect fun platformLog(tag: String, message: String)
 /** Wall clock for the current line, formatted `HH:mm:ss` by the platform. */
 expect fun platformTimestamp(): String
 
+/** Puts [text] on the system clipboard; `false` when the platform refused. */
+expect fun platformCopyToClipboard(text: String): Boolean
+
 /** Tag used by every diagnostic line of the app. */
 const val LOG_TAG = "UnlimitedCloud"
 
@@ -62,3 +65,19 @@ fun logDiagnostic(tag: String, message: String) {
     LogStore.add(tag, message)
     platformLog(tag, message)
 }
+
+/**
+ * Plain-text rendering shared by copy and export, so both produce identical
+ * output: a short header naming the source and line count, then one line per
+ * entry as `HH:mm:ss TAG message`.
+ */
+fun formatLogForExport(entries: List<LogEntry>): String = buildString {
+    appendLine("# Unlimited Cloud · log diagnostik")
+    appendLine("# ${entries.size} baris · diekspor ${platformTimestamp()}")
+    entries.forEach { entry ->
+        appendLine("${entry.time} ${entry.tag} ${entry.message}")
+    }
+}
+
+/** Timestamped file name for exports, e.g. `unlimited-cloud-log-14-03-11.txt`. */
+fun logExportFileName(): String = "unlimited-cloud-log-${platformTimestamp().replace(':', '-')}.txt"
