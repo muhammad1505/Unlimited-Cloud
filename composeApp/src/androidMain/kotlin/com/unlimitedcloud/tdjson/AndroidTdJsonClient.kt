@@ -1,49 +1,59 @@
 package com.unlimitedcloud.tdjson
 
+import com.sun.jna.Library
+import com.sun.jna.Native
+import com.sun.jna.Pointer
+
 /**
- * Android transport for the TDLib JSON API.
+ * Android transport backed by TDLib's JSON C API (`libtdjson.so`).
  *
- * Telegram publishes no JVM artifact on Maven, so the app expects TDLib's JSON
- * wrapper (`org.drinkless.tdlib.Client`, the wrapper from TDLib's Java example)
- * plus `libtdjson.so` to be bundled with the APK. It is reached reflectively so
- * `androidMain` compiles before those binaries exist; until they do, calls fail
- * soft and the UI reports that TDLib is unavailable.
+ * JNA is used on Android for the same protocol as desktop. The native library is
+ * expected at `composeApp/src/androidMain/jniLibs/<abi>/libtdjson.so`; without it
+ * the client fails with a readable message instead of crashing the process.
  */
 actual fun createTdJsonClient(): TdJsonClient = AndroidTdJsonClient()
 
+private interface TdJsonLibrary : Library {
+    fun td_json_client_create(): Pointer?
+
+    fun td_json_client_send(client: Pointer, request: String)
+
+    fun td_json_client_receive(client: Pointer, timeout: Double): String?
+
+    fun td_json_client_execute(client: Pointer?, request: String): String?
+
+    fun td_json_client_destroy(client: Pointer)
+}
+
+private object AndroidTdJsonLibrary {
+    val instance: TdJsonLibrary by lazy {
+        runCatching { Native.load("tdjson", TdJsonLibrary::class.java) }.getOrElse {
+            error(
+                "libtdjson.so tidak ditemukan. Letakkan biner TDLib untuk tiap ABI di " +
+                    "composeApp/src/androidMain/jniLibs/<abi>/libtdjson.so lalu build ulang.",
+            )
+        }
+    }
+}
+
 private class AndroidTdJsonClient : TdJsonClient {
 
-    private val clientClass: Class<*>? =
-        runCatching { Class.forName("org.drinkless.tdlib.Client") }.getOrNull()
-
-    private val instance: Any? by lazy { invokeStatic("create") }
+    private val client: Pointer? by lazy { AndroidTdJsonLibrary.instance.td_json_client_create() }
 
     override fun send(query: String) {
-        val target = instance ?: return
-        invokeStatic("send", target, query) ?: invokeInstance(target, "send", query)
+        val pointer = client ?: return
+        AndroidTdJsonLibrary.instance.td_json_client_send(pointer, query)
     }
 
-    override fun execute(query: String): String? = invokeStatic("execute", query) as? String
+    override fun execute(query: String): String? =
+        AndroidTdJsonLibrary.instance.td_json_client_execute(null, query)
 
     override fun receive(timeoutSeconds: Double): String? {
-        val target = instance ?: return null
-        return invokeInstance(target, "receive", timeoutSeconds) as? String
+        val pointer = client ?: return null
+        return AndroidTdJsonLibrary.instance.td_json_client_receive(pointer, timeoutSeconds)
     }
 
     override fun close() {
-        instance?.let { invokeInstance(it, "close") }
-    }
-
-    private fun invokeStatic(name: String, vararg args: Any?): Any? {
-        val cls = clientClass ?: return null
-        val method = cls.methods.firstOrNull { it.name == name && it.parameterCount == args.size }
-            ?: return null
-        return runCatching { method.invoke(null, *args) }.getOrNull()
-    }
-
-    private fun invokeInstance(target: Any, name: String, vararg args: Any?): Any? {
-        val method = target.javaClass.methods.firstOrNull { it.name == name && it.parameterCount == args.size }
-            ?: return null
-        return runCatching { method.invoke(target, *args) }.getOrNull()
+        client?.let { AndroidTdJsonLibrary.instance.td_json_client_destroy(it) }
     }
 }

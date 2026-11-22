@@ -103,6 +103,9 @@ kotlin {
 
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
+            // JNA drives the same libtdjson JSON API on Android; the AAR variant
+            // carries the dispatch libraries for every Android ABI.
+            implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
             implementation(libs.koin.android)
             implementation(libs.sqldelight.android.driver)
         }
