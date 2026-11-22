@@ -5,6 +5,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -20,30 +21,34 @@ data class CloudFile(
     val fileId: Int,
     val name: String,
     val size: Long,
+    /** Virtual folder, carried by the message caption. */
+    val folder: String?,
 )
 
-sealed interface CloudFilesState {
-    data object Loading : CloudFilesState
-
-    data class Loaded(val files: List<CloudFile>) : CloudFilesState
-
-    data class Failed(val message: String) : CloudFilesState
-}
+/** One slice of the channel history plus the cursor for the next slice. */
+data class CloudPage(
+    val files: List<CloudFile>,
+    val nextFromMessageId: Long?,
+)
 
 /**
  * Reads and writes files inside the root channel using plain TDLib requests.
  *
- * Every upload is a document message, so the channel doubles as the file index:
- * listing the history rebuilds the file tree without any external database.
+ * Every upload is a document message whose caption names a folder, so the
+ * channel doubles as both the file index and the directory structure.
  */
 class CloudFileRepository(private val session: TdJsonSession) {
 
-    suspend fun listFiles(chatId: Long, limit: Int = 100): List<CloudFile> {
+    suspend fun listFiles(
+        chatId: Long,
+        fromMessageId: Long = 0L,
+        limit: Int = PAGE_SIZE,
+    ): CloudPage {
         val response = session.call(
             buildJsonObject {
                 put("@type", "getChatHistory")
                 put("chat_id", chatId)
-                put("from_message_id", 0)
+                put("from_message_id", fromMessageId)
                 put("offset", 0)
                 put("limit", limit)
                 put("only_local", false)
@@ -51,27 +56,20 @@ class CloudFileRepository(private val session: TdJsonSession) {
         )
         requireOk(response)
 
-        val messages = response["messages"]?.jsonArray ?: return emptyList()
-        return messages.mapNotNull { element ->
-            val message = element.jsonObject
-            val content = message["content"]?.jsonObject ?: return@mapNotNull null
-            if (content["@type"]?.jsonPrimitive?.contentOrNull != "messageDocument") return@mapNotNull null
+        val messages = response["messages"]?.jsonArray.orEmpty()
+        val files = messages.mapNotNull { toFile(it.jsonObject) }
+        val lastMessageId = messages.lastOrNull()?.jsonObject?.get("id")?.jsonPrimitive?.longOrNull
 
-            val document = content["document"]?.jsonObject ?: return@mapNotNull null
-            val file = document["document"]?.jsonObject ?: return@mapNotNull null
-
-            CloudFile(
-                messageId = message["id"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null,
-                fileId = file["id"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null,
-                name = document["file_name"]?.jsonPrimitive?.contentOrNull
-                    ?.takeIf { it.isNotBlank() }
-                    ?: "file-${message["id"]?.jsonPrimitive?.longOrNull}",
-                size = file["size"]?.jsonPrimitive?.longOrNull ?: 0L,
-            )
+        val next = if (messages.size >= limit && lastMessageId != null && lastMessageId != 0L) {
+            lastMessageId
+        } else {
+            null
         }
+
+        return CloudPage(files = files, nextFromMessageId = next)
     }
 
-    suspend fun upload(chatId: Long, localPath: String) {
+    suspend fun upload(chatId: Long, localPath: String, folder: String?) {
         val response = session.call(
             buildJsonObject {
                 put("@type", "sendMessage")
@@ -85,6 +83,13 @@ class CloudFileRepository(private val session: TdJsonSession) {
                             buildJsonObject {
                                 put("@type", "inputFileLocal")
                                 put("path", localPath)
+                            },
+                        )
+                        put(
+                            "caption",
+                            buildJsonObject {
+                                put("text", folder.orEmpty())
+                                put("entities", buildJsonArray {})
                             },
                         )
                         put("disable_content_type_detection", true)
@@ -134,6 +139,32 @@ class CloudFileRepository(private val session: TdJsonSession) {
         path
     }
 
+    private fun toFile(message: JsonObject): CloudFile? {
+        val content = message["content"]?.jsonObject ?: return null
+        if (content["@type"]?.jsonPrimitive?.contentOrNull != "messageDocument") return null
+
+        val document = content["document"]?.jsonObject ?: return null
+        val file = document["document"]?.jsonObject ?: return null
+        val messageId = message["id"]?.jsonPrimitive?.longOrNull ?: return null
+        val folder = content["caption"]
+            ?.jsonObject
+            ?.get("text")
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+
+        return CloudFile(
+            messageId = messageId,
+            fileId = file["id"]?.jsonPrimitive?.intOrNull ?: return null,
+            name = document["file_name"]?.jsonPrimitive?.contentOrNull
+                ?.takeIf { it.isNotBlank() }
+                ?: "file-$messageId",
+            size = file["size"]?.jsonPrimitive?.longOrNull ?: 0L,
+            folder = folder,
+        )
+    }
+
     private fun requireOk(response: JsonObject) {
         if (response["@type"]?.jsonPrimitive?.contentOrNull == "error") {
             error(response["message"]?.jsonPrimitive?.contentOrNull ?: "TDLib menolak permintaan")
@@ -141,6 +172,7 @@ class CloudFileRepository(private val session: TdJsonSession) {
     }
 
     private companion object {
+        const val PAGE_SIZE = 50
         const val DOWNLOAD_TIMEOUT_MILLIS = 600_000L
         const val POLL_INTERVAL_MILLIS = 750L
     }
