@@ -3,6 +3,7 @@
 ## 1. Architecture Overview
 This is a Kotlin Multiplatform (KMP) & Compose Multiplatform project targeting **Android** and **Desktop (JVM)** using Telegram as an unlimited cloud storage backend via **TDLib**.
 
+- `androidApp/`: Thin `com.android.application` shell (manifest + packaging only). AGP 9 forbids applying `com.android.application` to a Kotlin Multiplatform module, so the APK is assembled here from `:composeApp`.
 - `composeApp/src/commonMain/`: Shared UI (Compose), Domain models, State management, SQLDelight database, and `expect` declarations for TelegramClient & FilePicker.
 - `composeApp/src/androidMain/`: Android-specific `actual` implementations (TDLib JNI `.so` bindings, Android context paths, FilePicker).
 - `composeApp/src/desktopMain/`: Desktop JVM `actual` implementations (TDLib JNI `.dll`/`.dylib`/`.so` bindings, Desktop paths, FilePicker).

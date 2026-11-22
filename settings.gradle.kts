@@ -30,3 +30,4 @@ dependencyResolutionManagement {
 rootProject.name = "Unlimited-Cloud"
 
 include(":composeApp")
+include(":androidApp")
