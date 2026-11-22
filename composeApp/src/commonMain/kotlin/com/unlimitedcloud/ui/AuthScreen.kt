@@ -27,8 +27,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.unlimitedcloud.auth.AuthUiState
 import com.unlimitedcloud.auth.TelegramEngine
-import com.unlimitedcloud.cloud.CloudChannelManager
-import com.unlimitedcloud.cloud.CloudChannelState
 import org.koin.compose.koinInject
 
 @Composable
@@ -62,7 +60,7 @@ fun AuthScreen() {
             is AuthUiState.WaitingForCode -> CodeForm(current, engine)
             AuthUiState.WaitingForRegistration -> RegistrationForm(engine)
             is AuthUiState.WaitingForPassword -> PasswordForm(current, engine)
-            is AuthUiState.Ready -> ReadySection(current)
+            is AuthUiState.Ready -> SignedInScreen(current, engine)
             is AuthUiState.Failure -> Text(
                 text = current.message,
                 color = MaterialTheme.colorScheme.error,
@@ -71,43 +69,6 @@ fun AuthScreen() {
 
             AuthUiState.LoggingOut -> CircularProgressIndicator()
             AuthUiState.Closed -> Text("Sesi ditutup")
-        }
-    }
-}
-
-@Composable
-private fun ReadySection(state: AuthUiState.Ready) {
-    val channelManager = koinInject<CloudChannelManager>()
-    val channelState by channelManager.channelState.collectAsState()
-    var retry by remember { mutableStateOf(0) }
-
-    LaunchedEffect(retry) { channelManager.ensureRootChannel() }
-
-    Text(
-        text = "Masuk sebagai user ${state.userId}",
-        style = MaterialTheme.typography.titleMedium,
-        textAlign = TextAlign.Center,
-    )
-
-    when (val channel = channelState) {
-        CloudChannelState.Idle, CloudChannelState.Resolving -> {
-            CircularProgressIndicator()
-            Text("Menyiapkan penyimpanan cloud…", style = MaterialTheme.typography.bodySmall)
-        }
-
-        is CloudChannelState.Ready -> Text(
-            text = "Penyimpanan siap (channel ${channel.chatId})",
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-        )
-
-        is CloudChannelState.Failed -> {
-            Text(
-                text = channel.message,
-                color = MaterialTheme.colorScheme.error,
-                textAlign = TextAlign.Center,
-            )
-            Button(onClick = { retry++ }) { Text("Coba lagi") }
         }
     }
 }

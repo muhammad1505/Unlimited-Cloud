@@ -5,7 +5,7 @@ This is a Kotlin Multiplatform (KMP) & Compose Multiplatform project targeting *
 
 - `androidApp/`: Thin `com.android.application` shell (manifest + packaging only). AGP 9 forbids applying `com.android.application` to a Kotlin Multiplatform module, so the APK is assembled here from `:composeApp`.
 - `composeApp/src/commonMain/`: Shared UI (Compose), Domain models, State management, SQLDelight database, and `expect` declarations for TelegramClient & FilePicker.
-- `composeApp/src/androidMain/`: Android-specific `actual` implementations (TDLib JNI `.so` bindings, Android context paths, FilePicker). Android reaches TDLib's JSON API reflectively through `org.drinkless.tdlib.Client` until the native binaries are bundled.
+- `composeApp/src/androidMain/`: Android-specific `actual` implementations (TDLib JNI `.so` bindings, Android context paths, FilePicker). Android reaches TDLib's JSON API through JNA; `libtdjson.so` per ABI must sit in `src/androidMain/jniLibs/<abi>/`.
 - `composeApp/src/desktopMain/`: Desktop JVM `actual` implementations (TDLib JSON transport through JNA + `libtdjson`, Desktop paths, FilePicker).
 
 ## 2. CRITICAL Environment Rules (Termux / Mobile Dev)

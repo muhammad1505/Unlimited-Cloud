@@ -2,6 +2,8 @@ package com.unlimitedcloud.di
 
 import com.unlimitedcloud.auth.TelegramEngine
 import com.unlimitedcloud.cloud.CloudChannelManager
+import com.unlimitedcloud.cloud.CloudFileRepository
+import com.unlimitedcloud.cloud.CloudFilesViewModel
 import com.unlimitedcloud.config.TelegramConfig
 import com.unlimitedcloud.tdjson.TdJsonClient
 import com.unlimitedcloud.tdjson.TdJsonSession
@@ -19,4 +21,6 @@ val appModule = module {
     single { TdJsonSession(client = get(), scope = get()) }
     single<TelegramEngine> { TdLibTelegramEngine(session = get(), config = get(), scope = get()) }
     single { CloudChannelManager(session = get()) }
+    single { CloudFileRepository(session = get()) }
+    factory { CloudFilesViewModel(repository = get(), channelManager = get(), scope = get()) }
 }
