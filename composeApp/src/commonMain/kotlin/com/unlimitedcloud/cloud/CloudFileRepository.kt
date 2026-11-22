@@ -105,7 +105,7 @@ class CloudFileRepository(private val session: TdJsonSession) {
                                     },
                                 )
                                 put("thumbnail", JsonNull)
-                                put("added_sticker_file_ids", buildJsonArray { })
+                                put("disable_content_type_detection", true)
                             },
                         )
                         put(
@@ -115,7 +115,6 @@ class CloudFileRepository(private val session: TdJsonSession) {
                                 put("entities", buildJsonArray {})
                             },
                         )
-                        put("disable_content_type_detection", true)
                     },
                 )
             },
