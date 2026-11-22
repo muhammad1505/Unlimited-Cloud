@@ -193,7 +193,7 @@ fun SettingsScreen(
             InfoRow(
                 icon = AppIcons.Cloud,
                 title = "Unlimited Cloud",
-                value = "Versi 1.0.0 · Compose Multiplatform",
+                value = "Versi 1.0.1 · Compose Multiplatform",
             )
             InfoRow(
                 icon = AppIcons.Shield,

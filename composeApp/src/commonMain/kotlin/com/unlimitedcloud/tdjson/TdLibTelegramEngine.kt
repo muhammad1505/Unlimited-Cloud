@@ -195,7 +195,7 @@ class TdLibTelegramEngine(
             put("system_language_code", "en")
             put("device_model", "Unlimited Cloud")
             put("system_version", "1.0")
-            put("application_version", "1.0.0")
+            put("application_version", "1.0.1")
             put("enable_storage_optimizer", true)
             put("ignore_file_names", false)
         }
