@@ -1,0 +1,39 @@
+# Local secrets (Telegram API credentials)
+local.properties
+.env
+.env.*
+
+# Gradle
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+gradlew.bat
+
+# Kotlin / KMP
+.kotlin/
+.kotlin-native/
+
+# Android
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+captures/
+.cxx/
+*.hprof
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# Native build output only (TDLib .so/.dll/.dylib bindings are committed)
+*.o
+*.class
+# OS
+.DS_Store
+Thumbs.db

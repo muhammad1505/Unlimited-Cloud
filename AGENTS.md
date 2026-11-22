@@ -1,0 +1,18 @@
+# Project Context: Unlimited Cloud (Kotlin Multiplatform + TDLib)
+
+## 1. Architecture Overview
+This is a Kotlin Multiplatform (KMP) & Compose Multiplatform project targeting **Android** and **Desktop (JVM)** using Telegram as an unlimited cloud storage backend via **TDLib**.
+
+- `composeApp/src/commonMain/`: Shared UI (Compose), Domain models, State management, SQLDelight database, and `expect` declarations for TelegramClient & FilePicker.
+- `composeApp/src/androidMain/`: Android-specific `actual` implementations (TDLib JNI `.so` bindings, Android context paths, FilePicker).
+- `composeApp/src/desktopMain/`: Desktop JVM `actual` implementations (TDLib JNI `.dll`/`.dylib`/`.so` bindings, Desktop paths, FilePicker).
+
+## 2. CRITICAL Environment Rules (Termux / Mobile Dev)
+- **DO NOT run `./gradlew`, `gradle`, or `adb` locally.** This workspace is running on an Android device (Termux) without Android SDK or sufficient RAM for JVM/Gradle builds.
+- Always run `python3 scripts/preflight.py` before committing any changes.
+- After pushing changes (`git push`), monitor the remote build using `gh run watch --exit-status`. If it fails, inspect logs with `gh run view --log-failed` and patch the code.
+
+## 3. Coding Conventions
+- Never import `android.*`, `java.io.File`, or `javax.*` inside `commonMain`. Use `okio.Path` / `okio.FileSystem` for multiplatform file handling.
+- Wrap all TDLib callbacks into Kotlin `Flow` or `suspendCancellableCoroutine`.
+- Keep UI components modular and responsive for both mobile portrait and desktop window layouts.
