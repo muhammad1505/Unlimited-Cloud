@@ -27,21 +27,39 @@ jobs:
       - name: Setup Gradle (with caching)
         uses: gradle/actions/setup-gradle@v6
 
+      # No Telegram credentials here on purpose: the shared Kotlin check only has
+      # to compile, and the dummy fallback keeps secrets out of this step.
       - name: Fast Kotlin Compile Check (Desktop)
-        env:
-          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
-          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: ./gradlew compileKotlinDesktop --stacktrace
 
-      - name: Build Android Debug APK
+      - name: Decode release keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$RELEASE_KEYSTORE_BASE64" ]; then
+            echo "::error::RELEASE_KEYSTORE_BASE64 secret is not configured"
+            exit 1
+          fi
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > androidApp/release.keystore
+          ls -l androidApp/release.keystore
+
+      - name: Build Signed Release APK
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
-        run: ./gradlew :androidApp:assembleDebug --stacktrace
+          RELEASE_STORE_FILE: androidApp/release.keystore
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: ./gradlew :androidApp:assembleRelease --stacktrace
 
-      - name: Upload Android Debug APK
+      - name: Upload Release APK
         uses: actions/upload-artifact@v7
         with:
-          name: unlimited-cloud-debug-apk
-          path: androidApp/build/outputs/apk/debug/*.apk
+          name: unlimited-cloud-release-apk
+          path: androidApp/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f androidApp/release.keystore
