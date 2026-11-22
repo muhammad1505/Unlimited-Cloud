@@ -59,19 +59,31 @@ jobs:
         run: ./gradlew :androidApp:assembleRelease --stacktrace
 
       # Guards against a silent regression: a build without libtdjson.so would
-      # install fine but fail at login on every device.
-      - name: Verify TDLib natives inside APK
+      # install fine but fail at login on every device. Also asserts the per-ABI
+      # split APKs stay one-architecture only.
+      - name: Verify release APKs
         run: |
-          APK=$(ls androidApp/build/outputs/apk/release/*.apk | head -1)
-          echo "Checking $APK"
-          unzip -l "$APK" | grep -E 'lib/(arm64-v8a|armeabi-v7a)/libtdjson\.so'
-          for abi in arm64-v8a armeabi-v7a; do
-            if ! unzip -l "$APK" | grep -q "lib/$abi/libtdjson.so"; then
-              echo "::error::lib/$abi/libtdjson.so is missing from the APK"
+          set -e
+          if ls androidApp/build/outputs/apk/release/*universal*.apk >/dev/null 2>&1; then
+            echo "::error::a universal APK was built; ABI splits must stay split"
+            exit 1
+          fi
+          for apk in androidApp/build/outputs/apk/release/*.apk; do
+            abi=$(basename "$apk")
+            case "$abi" in
+              *arm64-v8a*) abi=arm64-v8a ;;
+              *armeabi-v7a*) abi=armeabi-v7a ;;
+              *) echo "::error::cannot tell the ABI from $apk" ; exit 1 ;;
+            esac
+            natives=$(unzip -l "$apk" | grep -c 'libtdjson\.so' || true)
+            echo "$(basename "$apk"): $(du -h "$apk" | cut -f1), libtdjson.so x$natives"
+            unzip -l "$apk" | grep -E 'lib/.*\.so' | awk '{print "    " $4}'
+            if [ "$natives" -ne 1 ] || ! unzip -l "$apk" | grep -q "lib/$abi/libtdjson.so"; then
+              echo "::error::$apk must carry exactly lib/$abi/libtdjson.so"
               exit 1
             fi
           done
-          echo "Both TDLib ABIs are packaged"
+          echo "Per-ABI APKs carry their own TDLib natives"
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v7

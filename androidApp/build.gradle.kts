@@ -57,12 +57,28 @@ android {
 
     buildTypes {
         getByName("release") {
-            // JNA maps the TDLib JSON entry points by name, so shrinking stays off
-            // until a keep-rule set is verified on a device.
-            isMinifyEnabled = false
+            // JNA resolves the TDLib JSON entry points from Java method names, which
+            // is why proguard-rules.pro keeps those names explicitly.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
+        }
+    }
+
+    // One APK per CPU architecture instead of a universal APK: libtdjson.so alone
+    // is 31 MB (arm64) and 20 MB (v7a), so bundling both wasted space per device.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = false
         }
     }
 
@@ -73,6 +89,9 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        // Compressed natives shrink the download by roughly 60%; the system extracts
+        // them at install time. Uncompressed would keep ABI APKs around 43 MB.
+        jniLibs.useLegacyPackaging = true
     }
 }
 
