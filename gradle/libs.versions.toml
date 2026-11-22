@@ -11,7 +11,9 @@ sqldelight = "2.4.1"
 okio = "3.18.2"
 filekit = "0.17.1"
 activityCompose = "1.13.0"
+tdlightNatives = "4.0.308"
 tdlight = "3.5.9+td.1.8.68"
+jna = "5.14.0"
 
 androidCompileSdk = "37"
 androidMinSdk = "26"
@@ -42,7 +44,8 @@ filekit-dialogs-compose = { module = "io.github.vinceglb:filekit-dialogs-compose
 
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 
-tdlight-java = { module = "it.tdlight:tdlight-java", version.ref = "tdlight" }
+jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+tdlight-natives-linux = { module = "it.tdlight:tdlight-natives-linux-amd64", version.ref = "tdlightNatives" }
 
 [plugins]
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

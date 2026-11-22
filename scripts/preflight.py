@@ -7,6 +7,8 @@ FORBIDDEN_COMMON_IMPORTS = [
     r"^import\s+java\.io\.File",
     r"^import\s+javax\.",
     r"^import\s+org\.drinkless\.tdlib",
+    r"^import\s+it\.tdlight",
+    r"^import\s+com\.sun\.jna",
 ]
 
 def check_brackets(content, filepath):
