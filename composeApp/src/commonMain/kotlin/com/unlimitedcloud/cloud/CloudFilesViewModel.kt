@@ -1,5 +1,7 @@
 package com.unlimitedcloud.cloud
 
+import com.unlimitedcloud.log.LOG_TAG
+import com.unlimitedcloud.log.logDiagnostic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -173,6 +175,7 @@ class CloudFilesViewModel(
         val id = "transfer-${++transferCounter}"
         val fileName = localPath.substringAfterLast('/').substringAfterLast('\\').ifBlank { "berkas" }
         val normalizedFolder = folder?.trim()?.takeIf { it.isNotEmpty() }
+        logDiagnostic(LOG_TAG, "unggah mulai: $fileName → ${normalizedFolder ?: "(root)"}")
 
         state.update {
             it.copy(
@@ -209,6 +212,7 @@ class CloudFilesViewModel(
                             detail = "Tersimpan di Telegram",
                         )
                     }
+                    logDiagnostic(LOG_TAG, "unggah selesai: $fileName")
                     state.update { it.copy(status = "Unggahan $fileName selesai") }
                     refresh()
                 }
@@ -223,6 +227,7 @@ class CloudFilesViewModel(
             it.fileId == file.fileId && it.status == TransferStatus.Running
         }
         if (alreadyRunning) return
+        logDiagnostic(LOG_TAG, "unduh mulai: ${file.name} (file ${file.fileId})")
 
         val id = "transfer-${++transferCounter}"
         state.update {
@@ -248,6 +253,7 @@ class CloudFilesViewModel(
                 }
             }
                 .onSuccess { path ->
+                    logDiagnostic(LOG_TAG, "unduh selesai: ${file.name}")
                     updateTransfer(id) {
                         it.copy(
                             status = TransferStatus.Completed,
@@ -277,6 +283,7 @@ class CloudFilesViewModel(
 
             runCatching { repository.deleteMessages(chatId, listOf(file.messageId)) }
                 .onSuccess {
+                    logDiagnostic(LOG_TAG, "hapus selesai: ${file.name}")
                     state.update { current ->
                         val remaining = current.files.filterNot { it.messageId == file.messageId }
                         current.copy(
@@ -312,6 +319,7 @@ class CloudFilesViewModel(
     }
 
     private fun failTransfer(id: String, message: String) {
+        logDiagnostic(LOG_TAG, "transfer gagal: $message")
         updateTransfer(id) {
             it.copy(
                 status = TransferStatus.Failed,

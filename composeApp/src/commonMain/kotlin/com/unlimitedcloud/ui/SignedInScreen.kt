@@ -46,6 +46,7 @@ import com.unlimitedcloud.auth.TelegramEngine
 import com.unlimitedcloud.cloud.CloudChannelManager
 import com.unlimitedcloud.cloud.CloudChannelState
 import com.unlimitedcloud.cloud.CloudFilesViewModel
+import com.unlimitedcloud.log.LogStore
 import com.unlimitedcloud.ui.components.AppAvatar
 import com.unlimitedcloud.ui.components.AppIcons
 import com.unlimitedcloud.ui.components.BrandMark
@@ -77,9 +78,11 @@ fun SignedInScreen(
     val channelState by channelManager.channelState.collectAsState()
     val viewModel = koinInject<CloudFilesViewModel>()
     val filesState by viewModel.uiState.collectAsState()
+    val logEntries by LogStore.entries.collectAsState()
 
     var section by remember { mutableStateOf(AppSection.Files) }
     var showLogout by remember { mutableStateOf(false) }
+    var showLog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.refresh() }
 
@@ -122,7 +125,14 @@ fun SignedInScreen(
                 )
 
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    when (section) {
+                    if (showLog) {
+                        LogScreen(
+                            entries = logEntries,
+                            onClear = LogStore::clear,
+                            onBack = { showLog = false },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else when (section) {
                         AppSection.Files -> FilesScreen(
                             viewModel = viewModel,
                             state = filesState,
@@ -144,6 +154,7 @@ fun SignedInScreen(
                             onThemeModeChange = onThemeModeChange,
                             engine = engine,
                             viewModel = viewModel,
+                            onOpenLog = { showLog = true },
                             modifier = Modifier.fillMaxSize(),
                         )
                     }

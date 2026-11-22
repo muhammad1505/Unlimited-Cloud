@@ -29,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,6 +46,7 @@ import com.unlimitedcloud.auth.TelegramEngine
 import com.unlimitedcloud.cloud.CloudChannelState
 import com.unlimitedcloud.cloud.CloudFilesViewModel
 import com.unlimitedcloud.cloud.ExplorerUiState
+import com.unlimitedcloud.log.LogStore
 import com.unlimitedcloud.ui.components.AppAvatar
 import com.unlimitedcloud.ui.components.AppIcons
 import com.unlimitedcloud.ui.components.ConfirmDialog
@@ -65,9 +67,11 @@ fun SettingsScreen(
     onThemeModeChange: (ThemeMode) -> Unit,
     engine: TelegramEngine,
     viewModel: CloudFilesViewModel,
+    onOpenLog: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showLogout by remember { mutableStateOf(false) }
+    val logEntries by LogStore.entries.collectAsState()
 
     Column(
         modifier = modifier
@@ -156,6 +160,30 @@ fun SettingsScreen(
                     Spacer(Modifier.width(6.dp))
                     Text("Sinkronkan ulang")
                 }
+            }
+        }
+
+        SurfaceCard(modifier = Modifier.fillMaxWidth()) {
+            SectionHeader(title = "Diagnostik")
+            Spacer(Modifier.height(4.dp))
+            InfoRow(
+                icon = AppIcons.Tune,
+                title = "Log aktivitas",
+                value = "${logEntries.size} baris tersimpan di perangkat ini",
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Mencatat transisi login, pesan TDLib, dan setiap transfer. " +
+                    "Berguna saat ada perilaku yang tidak sesuai.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(2.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onOpenLog) { Text("Buka log") }
             }
         }
 

@@ -1,7 +1,7 @@
 package com.unlimitedcloud.tdjson
 
 import com.unlimitedcloud.log.LOG_TAG
-import com.unlimitedcloud.log.platformLog
+import com.unlimitedcloud.log.logDiagnostic
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,13 +72,13 @@ class TdJsonSession(
                 }
                 val update = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
                 if (update == null) {
-                    if (logTraffic) platformLog(LOG_TAG, "update tidak bisa di-parse: ${raw.take(120)}")
+                    if (logTraffic) logDiagnostic(LOG_TAG, "update tidak bisa di-parse: ${raw.take(120)}")
                     continue
                 }
                 val extra = update["@extra"]?.jsonPrimitive?.contentOrNull
                 if (logTraffic) {
                     val type = update["@type"]?.jsonPrimitive?.contentOrNull
-                    if (type != null && type !in QUIET_UPDATES) platformLog(LOG_TAG, "<- $type")
+                    if (type != null && type !in QUIET_UPDATES) logDiagnostic(LOG_TAG, "<- $type")
                 }
                 if (extra != null) {
                     val deferred = lock.withLock { pending.remove(extra) }
@@ -101,11 +101,11 @@ class TdJsonSession(
             put("@extra", JsonPrimitive(extra))
         }
         client.send(payload.toString())
-        if (logTraffic) platformLog(LOG_TAG, "-> ${request["@type"]?.jsonPrimitive?.contentOrNull}")
+        if (logTraffic) logDiagnostic(LOG_TAG, "-> ${request["@type"]?.jsonPrimitive?.contentOrNull}")
         return try {
             val response = withTimeout(timeoutMillis) { deferred.await() }
             if (logTraffic && response["@type"]?.jsonPrimitive?.contentOrNull == "error") {
-                platformLog(LOG_TAG, "<- error: ${response["message"]?.jsonPrimitive?.contentOrNull}")
+                logDiagnostic(LOG_TAG, "<- error: ${response["message"]?.jsonPrimitive?.contentOrNull}")
             }
             response
         } finally {
@@ -114,7 +114,7 @@ class TdJsonSession(
     }
 
     fun stop() {
-        if (logTraffic) platformLog(LOG_TAG, "sesi TDLib ditutup")
+        if (logTraffic) logDiagnostic(LOG_TAG, "sesi TDLib ditutup")
         receiver?.cancel()
         receiver = null
         client.close()
