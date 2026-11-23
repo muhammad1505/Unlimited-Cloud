@@ -21,6 +21,14 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.3.1 — 23 November 2026
+
+### Perbaikan
+
+- Chat penyimpanan hanya dipakai kalau Telegram melaporkan supergroup forum dan bukan channel. Channel sisa versi 1.2.x tidak bisa lagi dianggap sebagai penyimpanan, jadi aplikasi tidak pernah mengunggah berkas ke channel.
+- Grup topik punya jalur cadangan: kalau pembuatan forum ditolak server, aplikasi membuat supergroup biasa lalu mengaktifkan topik lewat `toggleSupergroupIsForum`, dan chat yang tetap bukan forum dihapus lagi.
+- Channel penyimpanan lama dibersihkan semua, termasuk yang tertinggal dari beberapa kali pemasangan, dan alasan penolakan dari TDLib sekarang tampil di Pengaturan → Penyimpanan.
+
 ## 1.3.0 — 23 November 2026
 
 ### Baru

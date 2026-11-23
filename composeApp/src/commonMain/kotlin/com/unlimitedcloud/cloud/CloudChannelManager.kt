@@ -34,6 +34,8 @@ sealed interface CloudChannelState {
  * with topics and every app folder becomes one topic. Builds before 1.3.0 used
  * a plain broadcast channel, which cannot host topics; such a channel is deleted
  * and replaced by a private forum group, so its files have to be uploaded again.
+ * A supergroup only counts as storage once `getSupergroup` reports it as a
+ * forum and not a channel, so an old channel can never be reused as storage.
  *
  * The chat id is persisted as soon as it is known and validated with `getChat`
  * on every launch. Discovery only falls back to searching when that id is gone
@@ -63,6 +65,9 @@ class CloudChannelManager(
 
     private val topics = ForumTopics(session)
     private var cachedChatId: Long? = null
+
+    /** Why the last `createNewSupergroupChat` was refused, for the settings card. */
+    private var lastCreateError: String? = null
 
     /** Forgets the storage chat of the previous account after a logout. */
     fun forget() {
@@ -99,6 +104,7 @@ class CloudChannelManager(
         if (found != null) {
             if (found.isForum) {
                 preferences.setCloudRootChatId(found.chatId)
+                deleteLeftoverStorageChats(except = found.chatId)
                 return ready(found.chatId)
             }
             deleteStorageChat(found.chatId)
@@ -123,12 +129,19 @@ class CloudChannelManager(
             return null
         }
         if (created == null) {
-            state.value =
-                CloudChannelState.Failed("grup $ROOT_STORAGE_TITLE tidak dapat dibuat")
+            val reason = lastCreateError
+            state.value = CloudChannelState.Failed(
+                if (reason.isNullOrBlank()) {
+                    "grup $ROOT_STORAGE_TITLE tidak dapat dibuat"
+                } else {
+                    "grup $ROOT_STORAGE_TITLE tidak dapat dibuat: $reason"
+                },
+            )
             return null
         }
 
         preferences.setCloudRootChatId(created)
+        deleteLeftoverStorageChats(except = created)
         return ready(created)
     }
 
@@ -180,15 +193,12 @@ class CloudChannelManager(
             }
         }
 
-        if (chat["title"]?.jsonPrimitive?.contentOrNull != ROOT_STORAGE_TITLE) {
-            return Check.Missing
-        }
-
         val type = chat["type"]?.jsonObject
         if (type?.get("@type")?.jsonPrimitive?.contentOrNull != "chatTypeSupergroup") {
             return Check.Missing
         }
-        val supergroupId = type["supergroup_id"]?.jsonPrimitive?.longOrNull ?: return Check.Missing
+        val supergroupId = type["supergroup_id"]?.jsonPrimitive?.longOrNull
+            ?: return Check.Missing
 
         val supergroup = runCatching {
             session.call(
@@ -201,10 +211,20 @@ class CloudChannelManager(
 
         if (supergroup.isError()) return Check.Unknown
 
-        return if (supergroup["is_forum"]?.jsonPrimitive?.booleanOrNull == true) {
-            Check.Valid
-        } else {
-            Check.Legacy
+        // A broadcast channel is a supergroup too, so `is_forum` alone proved
+        // nothing: builds up to 1.2.x created the storage as a channel and an
+        // upgraded app happily reused it. Both flags are checked now.
+        val isForum = supergroup["is_forum"]?.jsonPrimitive?.booleanOrNull == true
+        val isChannel = supergroup["is_channel"]?.jsonPrimitive?.booleanOrNull == true
+        val title = chat["title"]?.jsonPrimitive?.contentOrNull.orEmpty().trim()
+        val isStorageTitle = title.startsWith(ROOT_STORAGE_TITLE)
+
+        return when {
+            isForum && !isChannel && isStorageTitle -> Check.Valid
+            // Our own chat, but not a private forum group yet.
+            isStorageTitle -> Check.Legacy
+            // Someone else's chat with a similar title: leave it alone.
+            else -> Check.Missing
         }
     }
 
@@ -213,30 +233,7 @@ class CloudChannelManager(
         val serverIds = searchChatIds("searchChatsOnServer")
             .ifEmpty { searchChatIds("searchChats") }
 
-        // `loadChats` only fills the local cache and returns 404 once everything
-        // is already there, which is fine.
-        runCatching {
-            session.call(
-                buildJsonObject {
-                    put("@type", "loadChats")
-                    put(
-                        "chat_list",
-                        buildJsonObject { put("@type", "chatListMain") },
-                    )
-                    put("limit", CHAT_SCAN_LIMIT)
-                },
-            )
-        }
-        val knownIds = session.call(
-            buildJsonObject {
-                put("@type", "getChats")
-                put(
-                    "chat_list",
-                    buildJsonObject { put("@type", "chatListMain") },
-                )
-                put("limit", CHAT_SCAN_LIMIT)
-            },
-        )["chat_ids"]?.jsonArray?.mapNotNull { it.jsonPrimitive.longOrNull }.orEmpty()
+        val knownIds = knownChatIds()
 
         var legacy: Long? = null
         (serverIds + knownIds).distinct().forEach { chatId ->
@@ -259,44 +256,172 @@ class CloudChannelManager(
         )["chat_ids"]?.jsonArray?.mapNotNull { it.jsonPrimitive.longOrNull }.orEmpty()
     }.getOrDefault(emptyList())
 
+    /**
+     * Creates the storage supergroup and proves it really is a private forum.
+     *
+     * `is_forum` in the creation call is not honoured by every server version,
+     * so the chat is read back and topics are enabled with
+     * `toggleSupergroupIsForum` when they are missing. A chat that is still a
+     * channel or a plain group is deleted instead of being used as storage.
+     */
     private suspend fun createForumGroup(): Long? {
-        val response = session.call(
-            buildJsonObject {
-                put("@type", "createNewSupergroupChat")
-                put("title", ROOT_STORAGE_TITLE)
-                put("is_forum", true)
-                put("is_channel", false)
-                put("description", ROOT_STORAGE_DESCRIPTION)
-                // Required by TDLib even for a private group: without it the
-                // whole request is rejected and no chat is created at all.
-                put(
-                    "location",
-                    buildJsonObject {
-                        put("@type", "chatLocation")
-                        put("address", "")
-                        put(
-                            "location",
-                            buildJsonObject {
-                                put("@type", "location")
-                                put("latitude", 0.0)
-                                put("longitude", 0.0)
-                                put("horizontal_accuracy", 0.0)
-                            },
-                        )
-                    },
-                )
-            },
-        )
-        if (response.isError()) {
-            logDiagnostic(
-                LOG_TAG,
-                "grup topik ditolak TDLib: ${response["message"]?.jsonPrimitive?.contentOrNull}",
+        val chatId = requestSupergroup(isForum = true)
+            ?: requestSupergroup(isForum = false)
+            ?: return null
+
+        if (checkWithRetries(chatId) == Check.Valid) {
+            logDiagnostic(LOG_TAG, "grup topik siap: $chatId")
+            return chatId
+        }
+
+        logDiagnostic(LOG_TAG, "topik belum aktif di chat $chatId, mengaktifkan")
+        if (enableTopics(chatId)) {
+            logDiagnostic(LOG_TAG, "topik aktif di chat $chatId")
+            return chatId
+        }
+
+        logDiagnostic(LOG_TAG, "topik tidak bisa diaktifkan; chat $chatId dihapus lagi")
+        lastCreateError = "topik forum tidak bisa diaktifkan"
+        deleteStorageChat(chatId)
+        return null
+    }
+
+    private suspend fun requestSupergroup(isForum: Boolean): Long? {
+        val response = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "createNewSupergroupChat")
+                    put("title", ROOT_STORAGE_TITLE)
+                    put("is_forum", isForum)
+                    put("is_channel", false)
+                    put("description", ROOT_STORAGE_DESCRIPTION)
+                    // Required by TDLib even for a private group: without it the
+                    // whole request is rejected and no chat is created at all.
+                    put("location", chatLocationJson())
+                },
             )
+        }.getOrElse { failure ->
+            lastCreateError = failure.message
+            logDiagnostic(LOG_TAG, "grup topik gagal dibuat: ${failure.message}")
+            return null
+        }
+        if (response.isError()) {
+            lastCreateError = response["message"]?.jsonPrimitive?.contentOrNull
+            logDiagnostic(LOG_TAG, "grup topik ditolak TDLib: ${lastCreateError.orEmpty()}")
             return null
         }
         val chatId = response["id"]?.jsonPrimitive?.longOrNull
-        if (chatId != null) logDiagnostic(LOG_TAG, "grup topik dibuat: $chatId")
+        if (chatId != null) {
+            lastCreateError = null
+            logDiagnostic(LOG_TAG, "chat penyimpanan dibuat: $chatId (forum=$isForum)")
+        }
         return chatId
+    }
+
+    private fun chatLocationJson(): JsonObject = buildJsonObject {
+        put("@type", "chatLocation")
+        put("address", "")
+        put(
+            "location",
+            buildJsonObject {
+                put("@type", "location")
+                put("latitude", 0.0)
+                put("longitude", 0.0)
+                put("horizontal_accuracy", 0.0)
+            },
+        )
+    }
+
+    /** Turns topics on for a chat that was created as a plain supergroup. */
+    private suspend fun enableTopics(chatId: Long): Boolean {
+        val supergroupId = supergroupIdOf(chatId) ?: return false
+        val response = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "toggleSupergroupIsForum")
+                    put("supergroup_id", supergroupId)
+                    put("is_forum", true)
+                    put("has_forum_tabs", true)
+                },
+            )
+        }.getOrElse { failure ->
+            logDiagnostic(LOG_TAG, "aktifkan topik gagal: ${failure.message}")
+            return false
+        }
+        if (response.isError()) {
+            logDiagnostic(
+                LOG_TAG,
+                "aktifkan topik ditolak TDLib: " +
+                    response["message"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            )
+            return false
+        }
+        repeat(3) {
+            if (checkChat(chatId) == Check.Valid) return true
+            delay(CHECK_DELAY_MILLIS)
+        }
+        return checkChat(chatId) == Check.Valid
+    }
+
+    private suspend fun supergroupIdOf(chatId: Long): Long? {
+        val chat = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "getChat")
+                    put("chat_id", chatId)
+                },
+            )
+        }.getOrNull() ?: return null
+        if (chat.isError()) return null
+        val type = chat["type"]?.jsonObject ?: return null
+        if (type["@type"]?.jsonPrimitive?.contentOrNull != "chatTypeSupergroup") return null
+        return type["supergroup_id"]?.jsonPrimitive?.longOrNull
+    }
+
+    /**
+     * Removes every other chat this app created for storage. Repeated installs
+     * left more than one behind, and an old channel sitting in the chat list is
+     * what makes the storage look like it is still a channel.
+     */
+    private suspend fun deleteLeftoverStorageChats(except: Long) {
+        val ids = runCatching {
+            (searchChatIds("searchChatsOnServer") + searchChatIds("searchChats") + knownChatIds())
+                .distinct()
+        }.getOrDefault(emptyList())
+        ids.forEach { chatId ->
+            if (chatId == except) return@forEach
+            val check = runCatching { checkChat(chatId) }.getOrDefault(Check.Missing)
+            if (check == Check.Legacy) deleteStorageChat(chatId)
+        }
+    }
+
+    private suspend fun knownChatIds(): List<Long> {
+        // `loadChats` only fills the local cache and returns 404 once everything
+        // is already there, which is fine.
+        runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "loadChats")
+                    put(
+                        "chat_list",
+                        buildJsonObject { put("@type", "chatListMain") },
+                    )
+                    put("limit", CHAT_SCAN_LIMIT)
+                },
+            )
+        }
+        return runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "getChats")
+                    put(
+                        "chat_list",
+                        buildJsonObject { put("@type", "chatListMain") },
+                    )
+                    put("limit", CHAT_SCAN_LIMIT)
+                },
+            )["chat_ids"]?.jsonArray?.mapNotNull { it.jsonPrimitive.longOrNull }.orEmpty()
+        }.getOrDefault(emptyList())
     }
 
     /**
