@@ -21,7 +21,7 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
-## 1.3.0 — 23 November 2026
+## 1.2.1 — 23 November 2026
 
 ### Baru
 
@@ -37,6 +37,7 @@ Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 - Pop-up changelog muncul tepat setelah splash saat aplikasi diperbarui, tanpa menunggu sesi Telegram siap.
 - APK rilis hanya untuk arm64 sehingga build lebih cepat dan unduhan lebih kecil.
 - CI memisahkan build Android arm64 dan paket desktop; rilis tag memakai artefak build yang sudah lulus.
+
 ## 1.2.0 — 23 November 2026
 
 ### Baru
