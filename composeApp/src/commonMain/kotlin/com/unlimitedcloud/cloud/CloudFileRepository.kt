@@ -147,8 +147,8 @@ class CloudFileRepository(private val session: TdJsonSession) {
      */
     suspend fun download(
         fileId: Int,
-        onProgress: (Float?) -> Unit = {},
         priority: Int = 16,
+        onProgress: (Float?) -> Unit = {},
     ): String = withTimeout(DOWNLOAD_TIMEOUT_MILLIS) {
         session.call(
             buildJsonObject {
