@@ -15,6 +15,9 @@ androidxCore = "1.16.0"
 androidxWork = "2.12.0"
 tdlight = "3.5.9+td.1.8.68"
 jna = "5.14.0"
+# Pure-Java audio decoders for the desktop preview (MP3 and FLAC).
+jlayer = "1.0.1"
+jflac = "1.5.2"
 
 androidCompileSdk = "37"
 androidMinSdk = "26"
@@ -49,6 +52,9 @@ androidx-core = { module = "androidx.core:core", version.ref = "androidxCore" }
 androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "androidxWork" }
 
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+
+jlayer = { module = "javazoom:jlayer", version.ref = "jlayer" }
+jflac = { module = "org.jflac:jflac-codec", version.ref = "jflac" }
 
 [plugins]
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

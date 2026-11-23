@@ -217,6 +217,11 @@ kotlin {
             // wrapper (tdjni) for desktop, never tdjson, so the deb/rpm/msi are
             // packaged without natives and the user supplies libtdjson/.dll.
             implementation(libs.jna)
+
+            // The JDK mixer only understands WAV/AIFF, so MP3 and FLAC are
+            // decoded to PCM by these pure-Java libraries before playback.
+            implementation(libs.jlayer)
+            implementation(libs.jflac)
         }
     }
 }

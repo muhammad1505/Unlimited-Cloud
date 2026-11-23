@@ -30,8 +30,9 @@ expect fun decodeImageFile(path: String): ImageBitmap?
 /**
  * Shows a video, audio or PDF from TDLib's cached path. Android renders video in
  * a `VideoView`, audio through `MediaPlayer` and PDF pages through `PdfRenderer`;
- * desktop has no bundled media stack, so its actual explains the limitation and
- * keeps the download buttons available.
+ * desktop plays WAV through the JDK mixer and decodes MP3/FLAC in pure Java, and
+ * explains the limitation for video and PDF while keeping the download buttons
+ * available.
  */
 @Composable
 expect fun PlatformMediaPreview(path: String, fileName: String, modifier: Modifier)

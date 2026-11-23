@@ -23,6 +23,10 @@ Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
 ## 1.2.8 — 23 November 2026
 
+### Baru
+
+- Pratinjau audio di desktop kini memutar MP3 dan FLAC, bukan hanya WAV. Dekode berjalan di latar belakang dan kontrol pemutar muncul begitu trek siap, lengkap dengan pencarian posisi.
+
 ### Perbaikan
 
 - Daftar berkas tampil secepat halaman pertama dimuat: sisa riwayat menyusul di latar belakang sambil Anda menggulir, bukan menunggu semua halaman selesai. Membuka berkas juga tetap terasa instan.
