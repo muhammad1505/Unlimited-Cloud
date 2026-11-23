@@ -194,6 +194,11 @@ kotlin {
             implementation(libs.filekit.dialogs.compose)
         }
 
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
+        }
+
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
             // FileProvider for the share sheet and the persisted SAF grant helper.

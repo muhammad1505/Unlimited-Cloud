@@ -23,9 +23,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/** Full history loaded in one refresh, plus the cursor left for more. */
-private data class LoadedFiles(val files: List<CloudFile>, val nextFromMessageId: Long?)
-
 enum class FileSort(val label: String) {
     Newest("Terbaru"),
     Name("Nama"),
@@ -182,7 +179,7 @@ class CloudFilesViewModel(
             applyPage(firstPage, replace = true, moreToLoad = cursor != null)
 
             var pages = 1
-            while (cursor != null && pages < MAX_AUTO_PAGES) {
+            while (cursor != null && pages < PAGES_PER_REFRESH) {
                 val page = runCatching { loadPage(chatId, cursor) }.getOrElse { break }
                 pages++
                 cursor = page.nextFromMessageId
@@ -988,31 +985,10 @@ class CloudFilesViewModel(
      * Loads a few pages per request so reaching the end of a large channel does
      * not need one round trip per 50 files when the user asks for more.
      */
-    private suspend fun loadMorePages(chatId: Long, fromMessageId: Long): LoadedFiles {
-        val files = mutableListOf<CloudFile>()
-        val seen = mutableSetOf<Long>()
-        var cursor = fromMessageId
-        var nextCursor: Long? = null
-        var pages = 0
-
-        while (pages < MAX_MORE_PAGES) {
-            val page = loadPage(chatId, cursor)
-            pages++
-            page.files.forEach { file ->
-                if (seen.add(file.messageId)) files += file
-            }
-
-            val pageNext = page.nextFromMessageId
-            if (pageNext == null || pageNext == cursor) {
-                nextCursor = null
-                break
-            }
-            nextCursor = pageNext
-            cursor = pageNext
+    private suspend fun loadMorePages(chatId: Long, fromMessageId: Long): LoadedFiles =
+        collectPages(fromMessageId = fromMessageId, maxPages = PAGES_PER_MORE) { cursor ->
+            loadPage(chatId, cursor)
         }
-
-        return LoadedFiles(files = files, nextFromMessageId = nextCursor)
-    }
 
     /**
      * Loads one page, retrying while TDLib is still opening the chat. A request
@@ -1047,8 +1023,6 @@ class CloudFilesViewModel(
         const val CHANNEL_RETRY_MILLIS = 1_500L
         const val PAGE_ATTEMPTS = 3
         const val PAGE_RETRY_MILLIS = 1_000L
-        const val MAX_AUTO_PAGES = 20
-        const val MAX_MORE_PAGES = 4
         const val MAX_TRANSFERS = 200
         const val GALLERY_FOLDER = "Galeri"
     }

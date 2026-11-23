@@ -117,6 +117,10 @@ jobs:
       - name: Fast Kotlin compile check (Desktop)
         run: ./gradlew compileKotlinDesktop --stacktrace
 
+      # Shared JVM tests cover the history pagination without touching TDLib.
+      - name: Shared unit tests (Desktop)
+        run: ./gradlew :composeApp:desktopTest --stacktrace
+
       # TDLib has no Android artifact on Maven Central, so the prebuilt JSON
       # natives are downloaded (pinned version + checksum) into jniLibs.
       - name: Fetch TDLib Android natives
