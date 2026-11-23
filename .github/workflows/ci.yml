@@ -152,7 +152,9 @@ jobs:
         run: |
           if ! python3 scripts/check-apk-permissions.py androidApp/build/outputs/apk/release/*.apk; then
             echo "--- manifest merger report ---"
-            grep -B2 -A6 -i "dump" androidApp/build/outputs/logs/manifest-merger-release-report.txt 2>/dev/null | head -40
+            report=$(find androidApp/build -name '*manifest-merger*report*.txt' | head -1)
+            echo "report: ${report:-<none>}"
+            [ -n "$report" ] && grep -B3 -A6 -i "dump" "$report" | head -50
             exit 1
           fi
 
