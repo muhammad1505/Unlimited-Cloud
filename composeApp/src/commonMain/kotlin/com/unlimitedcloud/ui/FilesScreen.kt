@@ -524,6 +524,12 @@ private fun FileList(
 
         if (canLoadMore) {
             item {
+                // The row only composes near the end of the list, so reaching the
+                // bottom pages further without a tap. Keyed on the item count so a
+                // failed page does not retry in a loop.
+                LaunchedEffect(files.size, canLoadMore) {
+                    if (!loadingMore) onLoadMore()
+                }
                 LoadMoreRow(
                     loadingMore = loadingMore,
                     onLoadMore = onLoadMore,
@@ -570,6 +576,9 @@ private fun FileGrid(
 
         if (canLoadMore) {
             item(span = { GridItemSpan(maxLineSpan) }) {
+                LaunchedEffect(files.size, canLoadMore) {
+                    if (!loadingMore) onLoadMore()
+                }
                 LoadMoreRow(
                     loadingMore = loadingMore,
                     onLoadMore = onLoadMore,
@@ -597,7 +606,11 @@ private fun FileCard(
     ).joinToString(" · ")
 
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        // Tapping the card itself is the preview: routing it through the overflow
+        // menu made opening a file two taps plus a menu read.
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onPreview),
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(
@@ -629,7 +642,6 @@ private fun FileCard(
                             onDownload = onDownload,
                             onDelete = onDelete,
                             onShare = onShare,
-                            onPreview = onPreview,
                         )
                     }
                 }
@@ -708,7 +720,6 @@ private fun FileCard(
                         onDownload = onDownload,
                         onDelete = onDelete,
                         onShare = onShare,
-                        onPreview = onPreview,
                     )
                 }
             }
@@ -721,7 +732,6 @@ private fun FileActionsMenu(
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
-    onPreview: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -736,20 +746,6 @@ private fun FileActionsMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
-            DropdownMenuItem(
-                text = { Text("Pratinjau") },
-                leadingIcon = {
-                    Icon(
-                        imageVector = AppIcons.Eye,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                },
-                onClick = {
-                    expanded = false
-                    onPreview()
-                },
-            )
             DropdownMenuItem(
                 text = { Text("Bagikan") },
                 leadingIcon = {
