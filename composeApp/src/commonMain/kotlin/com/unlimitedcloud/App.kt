@@ -14,10 +14,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.unlimitedcloud.auth.AuthUiState
+import com.unlimitedcloud.changelog.AppChangelog
+import com.unlimitedcloud.changelog.ChangelogRelease
 import com.unlimitedcloud.auth.TelegramEngine
 import com.unlimitedcloud.platform.SystemBars
 import com.unlimitedcloud.settings.AppPreferences
 import com.unlimitedcloud.ui.AuthScreen
+import com.unlimitedcloud.ui.ChangelogDialog
 import com.unlimitedcloud.ui.SignedInScreen
 import com.unlimitedcloud.ui.SplashScreen
 import com.unlimitedcloud.ui.theme.ThemeMode
@@ -54,11 +57,29 @@ fun App() {
         val engine = koinInject<TelegramEngine>()
         val authState by engine.authState.collectAsState()
         var splashDone by remember { mutableStateOf(false) }
+        var updateRelease by remember { mutableStateOf<ChangelogRelease?>(null) }
 
         LaunchedEffect(Unit) {
             engine.start()
             delay(700)
             splashDone = true
+        }
+
+        // Show "what's new" once per installed version. A fresh install records
+        // the current version silently instead of welcoming the user with a
+        // changelog for a release they never ran.
+        LaunchedEffect(splashDone, authState) {
+            if (!splashDone || authState !is AuthUiState.Ready) return@LaunchedEffect
+            val installed = AppBuildInfo.VERSION_CODE
+            val seen = preferences.lastSeenVersionCode()
+            when {
+                seen == null -> preferences.markVersionSeen(installed)
+                seen < installed -> {
+                    preferences.markVersionSeen(installed)
+                    val release = AppChangelog.release(AppBuildInfo.VERSION_NAME)
+                    if (release != null && !release.isEmpty) updateRelease = release
+                }
+            }
         }
 
         val destination = when {
@@ -97,6 +118,13 @@ fun App() {
                     }
                 }
             }
+        }
+
+        updateRelease?.let { release ->
+            ChangelogDialog(
+                release = release,
+                onDismiss = { updateRelease = null },
+            )
         }
     }
 }

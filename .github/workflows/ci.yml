@@ -3,19 +3,83 @@ name: Unlimited Cloud CI
 on:
   push:
     branches: [ main, dev ]
+    # Without a tags filter GitHub skips tag pushes for this workflow entirely.
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Build only: compile and produce the artifacts the release consumes.
-  build:
+  # Fast, Gradle-free checks: they fail in seconds instead of after a 30-minute
+  # build, and the release job assumes they already passed on the branch.
+  static-checks:
+    name: Static checks
     if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: KMP preflight (imports, brackets, conflict markers)
+        run: python3 scripts/preflight.py
+
+      - name: Version and changelog consistency
+        run: python3 scripts/check-versions.py
+
+      # Files are reached through the Storage Access Framework, which is also what
+      # keeps the Play submission free of storage-permission declarations. The
+      # gallery sync reads a SAF tree the user picked, never a media permission.
+      - name: No storage permissions declared
+        run: |
+          set -e
+          if grep -Eq 'MANAGE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|READ_MEDIA_' \
+            androidApp/src/main/AndroidManifest.xml; then
+            echo "::error::the app must reach files through SAF, not storage permissions"
+            exit 1
+          fi
+          echo "no storage permissions declared"
+
+      - name: Regression guards for recent fixes
+        run: |
+          set -e
+          log_screen=composeApp/src/commonMain/kotlin/com/unlimitedcloud/ui/LogScreen.kt
+          repository=composeApp/src/commonMain/kotlin/com/unlimitedcloud/cloud/CloudFileRepository.kt
+          settings=composeApp/src/commonMain/kotlin/com/unlimitedcloud/ui/SettingsScreen.kt
+          gallery=composeApp/src/androidMain/kotlin/com/unlimitedcloud/platform/GallerySync.android.kt
+          battery=composeApp/src/androidMain/kotlin/com/unlimitedcloud/platform/BatteryOptimization.android.kt
+          manifest=androidApp/src/main/AndroidManifest.xml
+
+          grep -q 'platformCopyToClipboard' "$log_screen"
+          grep -q 'rememberLogFileSaver' "$log_screen"
+          # inputMessageDocument takes an InputDocument wrapper; passing an
+          # InputFile straight in breaks every upload with "InputFile is not specified".
+          grep -q '"inputDocument"' "$repository"
+          grep -q '"inputFileLocal"' "$repository"
+          # The share sheet must go through the FileProvider-backed cache.
+          grep -q 'androidx.core.content.FileProvider' "$manifest"
+          grep -q 'file_paths' "$manifest"
+          # Battery guidance opens the system screen; it never asks for the
+          # restricted REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission.
+          grep -q 'ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS' "$battery"
+          if grep -q 'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS' "$manifest" "$battery"; then
+            echo "::error::battery optimization must stay user-initiated"
+            exit 1
+          fi
+          grep -q 'rememberGalleryFolderPicker' "$settings"
+          grep -q 'takePersistableUriPermission' "$gallery"
+          echo "regression guards passed"
+
+  # Build only: compile and produce the artifacts the release consumes.
+  build:
+    name: Build signed release APK
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -26,12 +90,17 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
       - name: Setup Gradle (with caching)
         uses: gradle/actions/setup-gradle@v6
 
       # No Telegram credentials here on purpose: the shared Kotlin check only has
-      # to compile, and the dummy fallback keeps secrets out of this step.
-      - name: Fast Kotlin Compile Check (Desktop)
+      # to compile, and the dummy fallback keeps secrets out of this step. This
+      # also runs the generated version/changelog sources, so a broken
+      # CHANGELOG.md or versionName fails before the slow Android build.
+      - name: Fast Kotlin compile check (Desktop)
         run: ./gradlew compileKotlinDesktop --stacktrace
 
       # TDLib has no Android artifact on Maven Central, so the prebuilt JSON
@@ -47,10 +116,11 @@ jobs:
             echo "::error::RELEASE_KEYSTORE_BASE64 secret is not configured"
             exit 1
           fi
+          mkdir -p androidApp
           printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > androidApp/release.keystore
           ls -l androidApp/release.keystore
 
-      - name: Build Signed Release APK
+      - name: Build signed release APK
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
@@ -60,7 +130,15 @@ jobs:
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew :androidApp:assembleRelease --stacktrace
 
-      - name: Upload Release APK
+      - name: Verify release signature
+        run: |
+          APKSIGNER="${ANDROID_HOME}/build-tools/36.0.0/apksigner"
+          [ -x "$APKSIGNER" ] || APKSIGNER="${ANDROID_SDK_ROOT}/build-tools/36.0.0/apksigner"
+          for apk in androidApp/build/outputs/apk/release/*.apk; do
+            "$APKSIGNER" verify --print-certs "$apk"
+          done
+
+      - name: Upload release APKs
         uses: actions/upload-artifact@v7
         with:
           name: unlimited-cloud-release-apk
@@ -80,75 +158,47 @@ jobs:
         if: always()
         run: rm -f androidApp/release.keystore
 
-  # Test only: static analysis of the sources. No Gradle, no artifacts, so it
-  # finishes in seconds and never repeats the build's work.
-  test:
-    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: KMP preflight (imports, brackets, conflict markers)
-        run: python3 scripts/preflight.py
-
-      # Files are reached through the Storage Access Framework, which is also what
-      # keeps the Play submission free of storage-permission declarations.
-      - name: No storage permissions declared
-        run: |
-          set -e
-          if grep -Eq 'MANAGE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|READ_MEDIA_' \
-            androidApp/src/main/AndroidManifest.xml; then
-            echo "::error::the app must reach files through SAF, not storage permissions"
-            exit 1
-          fi
-          echo "no storage permissions declared"
-
-      - name: Version names stay in sync
-        run: |
-          set -e
-          apk=$(grep -oP 'versionName = "\K[^"]+' androidApp/build.gradle.kts)
-          desktop=$(grep -oP 'packageVersion = "\K[^"]+' composeApp/build.gradle.kts)
-          about=$(grep -oP 'Versi \K[0-9]+\.[0-9]+\.[0-9]+' composeApp/src/commonMain/kotlin/com/unlimitedcloud/ui/SettingsScreen.kt)
-          tdlib=$(grep -oP 'application_version", "\K[^"]+' composeApp/src/commonMain/kotlin/com/unlimitedcloud/tdjson/TdLibTelegramEngine.kt)
-          echo "apk=$apk desktop=$desktop about=$about tdlib=$tdlib"
-          for version in "$desktop" "$about" "$tdlib"; do
-            if [ "$version" != "$apk" ]; then
-              echo "::error::version mismatch: $version != $apk"
-              exit 1
-            fi
-          done
-
-      - name: Regression guards for recent fixes
-        run: |
-          set -e
-          log_screen=composeApp/src/commonMain/kotlin/com/unlimitedcloud/ui/LogScreen.kt
-          repository=composeApp/src/commonMain/kotlin/com/unlimitedcloud/cloud/CloudFileRepository.kt
-          grep -q 'platformCopyToClipboard' "$log_screen"
-          grep -q 'rememberLogFileSaver' "$log_screen"
-          # inputMessageDocument takes an InputDocument wrapper; passing an
-          # InputFile straight in breaks every upload with "InputFile is not specified".
-          grep -q '"inputDocument"' "$repository"
-          grep -q '"inputFileLocal"' "$repository"
-          echo "log actions and the InputDocument wrapper are in place"
-
-  # Tag only: attach the artifacts already built and released for this commit on
-  # main, without rebuilding the APK or repeating the analysis.
+  # Tag only: publish the artifacts already built and verified for this commit on
+  # main, without rebuilding the APK or repeating the static checks.
   release:
+    name: Publish release
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       actions: read
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # The tag is the version users see, so it must be the version that was
+      # compiled into the APK. Without this guard a typo would publish an older
+      # build under a newer tag.
+      - name: Verify tag matches gradle.properties
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          project_version=$(grep -oP '^unlimitedcloud\.versionName=\K.*' gradle.properties | tr -d '[:space:]')
+          if [ -z "$project_version" ]; then
+            echo "::error::gradle.properties has no unlimitedcloud.versionName"
+            exit 1
+          fi
+          if [ "$tag_version" != "$project_version" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match gradle.properties version ${project_version}"
+            exit 1
+          fi
+          python3 scripts/check-versions.py
+
       - name: Locate the verified build for this commit
         id: find
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          run_id=$(gh run list --workflow=ci.yml --branch main --commit "$GITHUB_SHA" \
-            --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=50")
+          run_id=$(printf '%s' "$runs" | jq -r '[.workflow_runs[] | select(.head_branch == "main" and .conclusion == "success")] | sort_by(.created_at) | last | .id // empty')
+          printf '%s' "$runs" | jq -r '.workflow_runs[] | "run \(.id) branch=\(.head_branch) status=\(.status) conclusion=\(.conclusion)"' || true
           if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
             echo "::error::no successful main build for $GITHUB_SHA; merge to main and let CI finish before tagging"
             exit 1

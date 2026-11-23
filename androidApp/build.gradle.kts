@@ -18,6 +18,16 @@ fun localProperty(key: String): String? {
 fun setting(key: String): String? =
     providers.environmentVariable(key).orNull?.takeIf { it.isNotBlank() } ?: localProperty(key)
 
+// Version comes from gradle.properties so the APK, the desktop package and the
+// in-app About screen can never drift apart. scripts/bump-version.py updates it.
+val appVersionName = providers.gradleProperty("unlimitedcloud.versionName").orNull ?: "1.0.0"
+require(appVersionName.matches(Regex("\\d+\\.\\d+\\.\\d+"))) {
+    "unlimitedcloud.versionName '$appVersionName' must be MAJOR.MINOR.PATCH"
+}
+val appVersionCode = appVersionName.split('.').map { it.toInt() }.let { (major, minor, patch) ->
+    major * 10_000 + minor * 100 + patch
+}
+
 val releaseStorePath = setting("RELEASE_STORE_FILE")
 val releaseStorePassword = setting("RELEASE_STORE_PASSWORD")
 val releaseKeyAlias = setting("RELEASE_KEY_ALIAS")
@@ -40,8 +50,8 @@ android {
         applicationId = "com.unlimitedcloud"
         minSdk = libs.versions.androidMinSdk.get().toInt()
         targetSdk = libs.versions.androidTargetSdk.get().toInt()
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = appVersionCode
+        versionName = appVersionName
     }
 
     signingConfigs {

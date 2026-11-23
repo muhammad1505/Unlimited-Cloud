@@ -2,6 +2,12 @@ package com.unlimitedcloud.cloud
 
 import com.unlimitedcloud.log.LOG_TAG
 import com.unlimitedcloud.log.logDiagnostic
+import com.unlimitedcloud.log.platformTimestamp
+import com.unlimitedcloud.platform.GalleryBackgroundSync
+import com.unlimitedcloud.platform.GalleryFolder
+import com.unlimitedcloud.platform.GallerySyncSource
+import com.unlimitedcloud.platform.MediaSaver
+import com.unlimitedcloud.settings.AppPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -51,6 +57,16 @@ data class ExplorerUiState(
     val error: String? = null,
     val status: String? = null,
     val transfers: List<TransferItem> = emptyList(),
+    val gallerySupported: Boolean = false,
+    val galleryAutoSync: Boolean = false,
+    val galleryBackgroundSupported: Boolean = false,
+    val galleryBackgroundSync: Boolean = false,
+    val galleryFolderName: String? = null,
+    val gallerySyncing: Boolean = false,
+    val galleryLastSync: String? = null,
+    val gallerySyncedCount: Int = 0,
+    val autoSaveSupported: Boolean = false,
+    val autoSavePhotos: Boolean = false,
 ) {
     val visibleFiles: List<CloudFile>
         get() {
@@ -78,7 +94,8 @@ data class ExplorerUiState(
 }
 
 /**
- * Drives the file list, history pagination, search and one transfer at a time.
+ * Drives the file list, history pagination, search, one transfer at a time and
+ * the incremental gallery sync.
  *
  * Kept as a plain class (not a platform ViewModel) so Android and Desktop share
  * the exact same behaviour; Koin keeps a single instance for the signed-in shell.
@@ -86,10 +103,30 @@ data class ExplorerUiState(
 class CloudFilesViewModel(
     private val repository: CloudFileRepository,
     private val channelManager: CloudChannelManager,
+    private val preferences: AppPreferences,
+    private val gallerySource: GallerySyncSource,
+    private val backgroundSync: GalleryBackgroundSync,
+    private val mediaSaver: MediaSaver,
     private val scope: CoroutineScope,
 ) {
-    private val state = MutableStateFlow(ExplorerUiState())
+    private val state = MutableStateFlow(
+        ExplorerUiState(
+            gallerySupported = gallerySource.supported,
+            galleryAutoSync = preferences.galleryAutoSync(),
+            galleryBackgroundSupported = backgroundSync.supported,
+            galleryBackgroundSync = preferences.galleryBackgroundSync(),
+            galleryFolderName = preferences.galleryFolderName(),
+            galleryLastSync = preferences.galleryLastSync(),
+            gallerySyncedCount = preferences.gallerySyncedKeys().size,
+            autoSaveSupported = mediaSaver.supported,
+            autoSavePhotos = preferences.autoSavePhotos(),
+        ),
+    )
     val uiState: StateFlow<ExplorerUiState> = state.asStateFlow()
+
+    init {
+        refreshBackgroundSchedule()
+    }
 
     private var transferCounter = 0L
 
@@ -171,11 +208,20 @@ class CloudFilesViewModel(
         state.update { it.copy(error = null) }
     }
 
+    /** Shows a one-shot confirmation, e.g. after the share sheet was opened. */
+    fun reportStatus(message: String) {
+        state.update { it.copy(status = message, error = null) }
+    }
+
+    fun reportError(message: String) {
+        state.update { it.copy(error = message, status = null) }
+    }
+
     fun upload(localPath: String, folder: String?) {
         val id = "transfer-${++transferCounter}"
         val fileName = localPath.substringAfterLast('/').substringAfterLast('\\').ifBlank { "berkas" }
         val normalizedFolder = folder?.trim()?.takeIf { it.isNotEmpty() }
-        logDiagnostic(LOG_TAG, "unggah mulai: $fileName → ${normalizedFolder ?: "(root)"}")
+        logDiagnostic(LOG_TAG, "unggah mulai: $fileName → ${normalizedFolder ?: \"(root)\"}")
 
         state.update {
             it.copy(
@@ -199,19 +245,8 @@ class CloudFilesViewModel(
                 return@launch
             }
 
-            runCatching {
-                repository.upload(chatId, localPath, normalizedFolder) { progress ->
-                    updateTransfer(id) { it.copy(progress = progress) }
-                }
-            }
+            uploadFile(id, chatId, localPath, normalizedFolder)
                 .onSuccess {
-                    updateTransfer(id) {
-                        it.copy(
-                            status = TransferStatus.Completed,
-                            progress = 1f,
-                            detail = "Tersimpan di Telegram",
-                        )
-                    }
                     logDiagnostic(LOG_TAG, "unggah selesai: $fileName")
                     state.update { it.copy(status = "Unggahan $fileName selesai") }
                     refresh()
@@ -222,11 +257,19 @@ class CloudFilesViewModel(
         }
     }
 
-    fun download(file: CloudFile) {
+    /**
+     * Downloads [file] and hands the local path to [onDownloaded]. Used by the
+     * share action, which needs TDLib's local copy before it can build an
+     * `ACTION_SEND` intent.
+     */
+    fun download(file: CloudFile, onDownloaded: (String) -> Unit = {}) {
         val alreadyRunning = state.value.transfers.any {
             it.fileId == file.fileId && it.status == TransferStatus.Running
         }
-        if (alreadyRunning) return
+        if (alreadyRunning) {
+            state.update { it.copy(status = "Unduhan ${file.name} sedang berjalan") }
+            return
+        }
         logDiagnostic(LOG_TAG, "unduh mulai: ${file.name} (file ${file.fileId})")
 
         val id = "transfer-${++transferCounter}"
@@ -261,9 +304,17 @@ class CloudFilesViewModel(
                             detail = path,
                         )
                     }
+                    val savedToGallery = saveToDeviceGallery(file, path)
                     state.update {
-                        it.copy(status = "Tersimpan: ${path.substringAfterLast('/').substringAfterLast('\\')}")
+                        it.copy(
+                            status = if (savedToGallery) {
+                                "Tersimpan di galeri: ${file.name}"
+                            } else {
+                                "Tersimpan: ${path.substringAfterLast('/').substringAfterLast('\\')}"
+                            },
+                        )
                     }
+                    onDownloaded(path)
                 }
                 .onFailure { failure ->
                     failTransfer(id, failure.message ?: "Unduhan gagal")
@@ -308,6 +359,207 @@ class CloudFilesViewModel(
         }
     }
 
+    // --- Gallery auto sync -----------------------------------------------------
+
+    fun setGalleryAutoSync(enabled: Boolean) {
+        preferences.setGalleryAutoSync(enabled)
+        state.update { it.copy(galleryAutoSync = enabled) }
+        refreshBackgroundSchedule()
+        if (enabled) syncGallery(auto = true)
+    }
+
+    fun setGalleryBackgroundSync(enabled: Boolean) {
+        preferences.setGalleryBackgroundSync(enabled)
+        state.update { it.copy(galleryBackgroundSync = enabled) }
+        refreshBackgroundSchedule()
+        if (enabled) syncGallery(auto = true)
+    }
+
+    fun setAutoSavePhotos(enabled: Boolean) {
+        preferences.setAutoSavePhotos(enabled)
+        state.update { it.copy(autoSavePhotos = enabled) }
+    }
+
+    fun setGalleryFolder(folder: GalleryFolder) {
+        preferences.setGalleryFolder(folder.id, folder.name)
+        state.update { it.copy(galleryFolderName = folder.name) }
+        refreshBackgroundSchedule()
+        syncGallery(auto = true)
+    }
+
+    fun clearGalleryFolder() {
+        preferences.setGalleryFolder(null, null)
+        preferences.clearGallerySyncedKeys()
+        state.update { it.copy(galleryFolderName = null, gallerySyncedCount = 0) }
+        refreshBackgroundSchedule()
+    }
+
+    /** Forgets which photos were uploaded, so the next sync offers them again. */
+    fun resetGallerySync() {
+        preferences.clearGallerySyncedKeys()
+        state.update { it.copy(gallerySyncedCount = 0) }
+        syncGallery(auto = false)
+    }
+
+    /**
+     * Uploads at most [GALLERY_BATCH_SIZE] new images from the chosen folder into
+     * the "Galeri" folder of the storage channel. Runs once per app session when
+     * auto sync is enabled, and on demand from Settings.
+     */
+    fun syncGallery(auto: Boolean = false, limit: Int = GALLERY_BATCH_SIZE) {
+        if (!gallerySource.supported) {
+            if (!auto) reportError("Sinkronisasi galeri hanya tersedia di Android")
+            return
+        }
+        if (state.value.gallerySyncing) return
+        // The automatic entry point must respect the toggle; only the explicit
+        // "Sinkronkan sekarang" action ignores it.
+        if (auto && !preferences.galleryAutoSync()) return
+
+        val folderId = preferences.galleryFolderId()
+        val folderName = state.value.galleryFolderName ?: preferences.galleryFolderName()
+        if (folderId == null || folderName.isNullOrBlank()) {
+            if (!auto) reportError("Pilih folder galeri terlebih dahulu")
+            return
+        }
+
+        scope.launch {
+            state.update { it.copy(gallerySyncing = true, error = null) }
+
+            val chatId = channelManager.ensureRootChannel()
+            if (chatId == null) {
+                state.update {
+                    it.copy(gallerySyncing = false, error = "Channel penyimpanan belum siap")
+                }
+                return@launch
+            }
+
+            val folder = GalleryFolder(id = folderId, name = folderName)
+            val photos = runCatching {
+                gallerySource.pendingPhotos(
+                    folder = folder,
+                    alreadySynced = preferences.gallerySyncedKeys(),
+                    limit = limit,
+                )
+            }.getOrElse { failure ->
+                state.update {
+                    it.copy(
+                        gallerySyncing = false,
+                        error = failure.message ?: "Gagal membaca folder galeri",
+                    )
+                }
+                return@launch
+            }
+
+            var uploaded = 0
+            var failed = 0
+
+            photos.forEach { photo ->
+                val transferId = "transfer-${++transferCounter}"
+                state.update { current ->
+                    current.copy(
+                        transfers = listOf(
+                            TransferItem(
+                                id = transferId,
+                                fileName = photo.name,
+                                direction = TransferDirection.Upload,
+                                progress = 0f,
+                            ),
+                        ) + current.transfers,
+                    )
+                }
+
+                val result = uploadFile(transferId, chatId, photo.localPath, GALLERY_FOLDER)
+                gallerySource.release(listOf(photo))
+
+                result.fold(
+                    onSuccess = {
+                        uploaded++
+                        preferences.addGallerySyncedKeys(listOf(photo.key))
+                        logDiagnostic(LOG_TAG, "galeri tersinkron: ${photo.name}")
+                    },
+                    onFailure = { failure ->
+                        failed++
+                        logDiagnostic(LOG_TAG, "galeri gagal: ${photo.name}: ${failure.message}")
+                    },
+                )
+            }
+
+            if (uploaded > 0) refresh()
+
+            val stamp = platformTimestamp()
+            preferences.setGalleryLastSync(stamp)
+            state.update {
+                it.copy(
+                    gallerySyncing = false,
+                    galleryLastSync = stamp,
+                    gallerySyncedCount = preferences.gallerySyncedKeys().size,
+                    status = when {
+                        uploaded > 0 -> "$uploaded foto galeri diunggah"
+                        failed == 0 -> "Galeri sudah sinkron"
+                        else -> null
+                    },
+                    error = if (failed > 0) "$failed foto gagal diunggah" else null,
+                )
+            }
+        }
+    }
+
+    // --- Internals -------------------------------------------------------------
+
+    /** Copies the download into Pictures/Unlimited Cloud when the user opted in. */
+    private suspend fun saveToDeviceGallery(file: CloudFile, localPath: String): Boolean {
+        if (!mediaSaver.supported || !preferences.autoSavePhotos()) return false
+        val mimeType = imageMimeType(file.name) ?: return false
+        return runCatching { mediaSaver.saveImage(localPath, file.name, mimeType) }
+            .getOrDefault(false)
+    }
+
+    private fun imageMimeType(name: String): String? =
+        when (name.substringAfterLast('.', "").lowercase()) {
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "webp" -> "image/webp"
+            "gif" -> "image/gif"
+            "heic", "heif" -> "image/heic"
+            "bmp" -> "image/bmp"
+            else -> null
+        }
+
+    private fun refreshBackgroundSchedule() {
+        if (!backgroundSync.supported) return
+        val active = state.value.galleryAutoSync &&
+            preferences.galleryBackgroundSync() &&
+            !state.value.galleryFolderName.isNullOrBlank()
+        if (active) backgroundSync.schedule() else backgroundSync.cancel()
+    }
+
+    private suspend fun uploadFile(
+        transferId: String,
+        chatId: Long,
+        localPath: String,
+        folder: String?,
+    ): Result<Unit> = runCatching {
+        repository.upload(chatId, localPath, folder) { progress ->
+            updateTransfer(transferId) { it.copy(progress = progress) }
+        }
+    }.onSuccess {
+        updateTransfer(transferId) {
+            it.copy(
+                status = TransferStatus.Completed,
+                progress = 1f,
+                detail = "Tersimpan di Telegram",
+            )
+        }
+    }.onFailure { failure ->
+        updateTransfer(transferId) {
+            it.copy(
+                status = TransferStatus.Failed,
+                detail = failure.message ?: "Transfer gagal",
+            )
+        }
+    }
+
     private fun updateTransfer(id: String, transform: (TransferItem) -> TransferItem) {
         state.update { current ->
             current.copy(
@@ -341,5 +593,10 @@ class CloudFilesViewModel(
             nextFromMessageId = page.nextFromMessageId,
             error = null,
         )
+    }
+
+    private companion object {
+        const val GALLERY_BATCH_SIZE = 20
+        const val GALLERY_FOLDER = "Galeri"
     }
 }

@@ -23,6 +23,11 @@
 }
 -keep,includedescriptorclasses class com.unlimitedcloud.**$$serializer { *; }
 
+# --- WorkManager ----------------------------------------------------------
+# The periodic request stores the worker class name and instantiates it by
+# reflection, so the constructor must survive shrinking.
+-keep class com.unlimitedcloud.platform.GallerySyncWorker { *; }
+
 # --- Koin -----------------------------------------------------------------
 -keep class org.koin.** { *; }
 -dontwarn org.koin.**

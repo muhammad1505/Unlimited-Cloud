@@ -1,5 +1,11 @@
 package com.unlimitedcloud.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,6 +38,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,6 +54,7 @@ import com.unlimitedcloud.cloud.CloudChannelManager
 import com.unlimitedcloud.cloud.CloudChannelState
 import com.unlimitedcloud.cloud.CloudFilesViewModel
 import com.unlimitedcloud.log.LogStore
+import com.unlimitedcloud.platform.PlatformBackHandler
 import com.unlimitedcloud.ui.components.AppAvatar
 import com.unlimitedcloud.ui.components.AppIcons
 import com.unlimitedcloud.ui.components.BrandMark
@@ -66,7 +74,21 @@ private enum class AppSection(
     Settings("Pengaturan", "Pengaturan", "Akun, tampilan, dan penyimpanan", AppIcons.Tune),
 }
 
-/** Signed-in shell: adaptive rail/bottom navigation around the three sections. */
+/**
+ * Every visible page of the signed-in shell, including the two secondary pages
+ * opened from Settings. Modelling them as one destination type keeps the
+ * transition, the back handling and the navigation highlight consistent.
+ */
+private sealed interface AppDestination {
+    data class Section(val section: AppSection) : AppDestination
+    data object Diagnostics : AppDestination
+    data object Changelog : AppDestination
+}
+
+private const val OVERLAY_LOG = "log"
+private const val OVERLAY_CHANGELOG = "changelog"
+
+/** Signed-in shell: adaptive rail/bottom navigation around the app sections. */
 @Composable
 fun SignedInScreen(
     state: AuthUiState.Ready,
@@ -80,11 +102,33 @@ fun SignedInScreen(
     val filesState by viewModel.uiState.collectAsState()
     val logEntries by LogStore.entries.collectAsState()
 
-    var section by remember { mutableStateOf(AppSection.Files) }
-    var showLogout by remember { mutableStateOf(false) }
-    var showLog by remember { mutableStateOf(false) }
+    // rememberSaveable keeps the selected section across rotation and the
+    // declared configChanges, which plain `remember` lost.
+    var sectionName by rememberSaveable { mutableStateOf(AppSection.Files.name) }
+    val section = AppSection.entries.firstOrNull { it.name == sectionName } ?: AppSection.Files
+    var overlay by rememberSaveable { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) { viewModel.refresh() }
+    var showLogout by remember { mutableStateOf(false) }
+
+    val destination: AppDestination = when (overlay) {
+        OVERLAY_LOG -> AppDestination.Diagnostics
+        OVERLAY_CHANGELOG -> AppDestination.Changelog
+        else -> AppDestination.Section(section)
+    }
+
+    val selectSection: (AppSection) -> Unit = { target ->
+        overlay = null
+        sectionName = target.name
+    }
+
+    PlatformBackHandler(enabled = overlay != null) { overlay = null }
+
+    LaunchedEffect(Unit) {
+        viewModel.refresh()
+        // Auto sync is a no-op unless the feature is enabled and a folder was
+        // picked; it runs once when the signed-in shell first appears.
+        viewModel.syncGallery(auto = true)
+    }
 
     val background = MaterialTheme.colorScheme.background
     val ambient = MaterialTheme.colorScheme.primary
@@ -109,52 +153,75 @@ fun SignedInScreen(
             if (expanded) {
                 AppNavigationRail(
                     section = section,
-                    onSelect = { section = it },
+                    onSelect = selectSection,
                     userName = state.displayName,
+                    activeTransfers = filesState.activeTransfers.size,
                     onLogout = { showLogout = true },
                 )
             }
 
             Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                AppHeader(
-                    section = section,
-                    userName = state.displayName,
-                    channelState = channelState,
-                    expanded = expanded,
-                    onProfile = { section = AppSection.Settings },
-                )
+                if (overlay == null) {
+                    AppHeader(
+                        section = section,
+                        userName = state.displayName,
+                        channelState = channelState,
+                        expanded = expanded,
+                        onProfile = { selectSection(AppSection.Settings) },
+                    )
+                }
 
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    if (showLog) {
-                        LogScreen(
+                AnimatedContent(
+                    targetState = destination,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    transitionSpec = {
+                        (
+                            fadeIn(animationSpec = tween(220)) +
+                                slideInVertically(animationSpec = tween(220)) { height ->
+                                    height / 24
+                                }
+                            ).togetherWith(fadeOut(animationSpec = tween(140)))
+                    },
+                    label = "app-destination",
+                ) { target ->
+                    when (target) {
+                        is AppDestination.Section -> when (target.section) {
+                            AppSection.Files -> FilesScreen(
+                                viewModel = viewModel,
+                                state = filesState,
+                                expanded = expanded,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+
+                            AppSection.Transfers -> TransfersScreen(
+                                viewModel = viewModel,
+                                state = filesState,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+
+                            AppSection.Settings -> SettingsScreen(
+                                user = state,
+                                channelState = channelState,
+                                filesState = filesState,
+                                themeMode = themeMode,
+                                onThemeModeChange = onThemeModeChange,
+                                engine = engine,
+                                viewModel = viewModel,
+                                onOpenLog = { overlay = OVERLAY_LOG },
+                                onOpenChangelog = { overlay = OVERLAY_CHANGELOG },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+
+                        AppDestination.Diagnostics -> LogScreen(
                             entries = logEntries,
                             onClear = LogStore::clear,
-                            onBack = { showLog = false },
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else when (section) {
-                        AppSection.Files -> FilesScreen(
-                            viewModel = viewModel,
-                            state = filesState,
-                            expanded = expanded,
+                            onBack = { overlay = null },
                             modifier = Modifier.fillMaxSize(),
                         )
 
-                        AppSection.Transfers -> TransfersScreen(
-                            viewModel = viewModel,
-                            state = filesState,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-
-                        AppSection.Settings -> SettingsScreen(
-                            user = state,
-                            channelState = channelState,
-                            filesState = filesState,
-                            themeMode = themeMode,
-                            onThemeModeChange = onThemeModeChange,
-                            engine = engine,
-                            viewModel = viewModel,
-                            onOpenLog = { showLog = true },
+                        AppDestination.Changelog -> ChangelogScreen(
+                            onBack = { overlay = null },
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
@@ -163,7 +230,7 @@ fun SignedInScreen(
                 if (!expanded) {
                     AppBottomBar(
                         section = section,
-                        onSelect = { section = it },
+                        onSelect = selectSection,
                         activeTransfers = filesState.activeTransfers.size,
                     )
                 }
@@ -250,6 +317,7 @@ private fun AppNavigationRail(
     section: AppSection,
     onSelect: (AppSection) -> Unit,
     userName: String,
+    activeTransfers: Int,
     onLogout: () -> Unit,
 ) {
     Surface(
@@ -273,6 +341,7 @@ private fun AppNavigationRail(
                 RailItem(
                     item = item,
                     selected = item == section,
+                    badge = item == AppSection.Transfers && activeTransfers > 0,
                     onClick = { onSelect(item) },
                 )
             }
@@ -300,6 +369,7 @@ private fun AppNavigationRail(
 private fun RailItem(
     item: AppSection,
     selected: Boolean,
+    badge: Boolean,
     onClick: () -> Unit,
 ) {
     Column(
@@ -335,10 +405,21 @@ private fun RailItem(
                 },
                 modifier = Modifier.size(20.dp),
             )
+            if (badge) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 3.dp, end = 3.dp)
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.error),
+                )
+            }
         }
         Text(
             text = item.label,
             style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
             color = if (selected) {
                 MaterialTheme.colorScheme.primary
             } else {
@@ -416,6 +497,7 @@ private fun AppBottomBar(
                     Text(
                         text = item.label,
                         style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
                         color = if (selected) {
                             MaterialTheme.colorScheme.primary
                         } else {

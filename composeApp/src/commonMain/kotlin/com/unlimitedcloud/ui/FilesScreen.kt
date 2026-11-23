@@ -2,6 +2,7 @@ package com.unlimitedcloud.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,6 +58,9 @@ import com.unlimitedcloud.cloud.ExplorerUiState
 import com.unlimitedcloud.cloud.FileSort
 import com.unlimitedcloud.cloud.TransferItem
 import com.unlimitedcloud.cloud.TransferStatus
+import com.unlimitedcloud.platform.ShareRequest
+import com.unlimitedcloud.platform.ShareResult
+import com.unlimitedcloud.platform.rememberFileSharer
 import com.unlimitedcloud.platform.rememberLocalFilePicker
 import com.unlimitedcloud.ui.components.AppIcons
 import com.unlimitedcloud.ui.components.AppTextField
@@ -69,6 +73,7 @@ import com.unlimitedcloud.ui.components.InfoBanner
 import com.unlimitedcloud.ui.components.MetricChip
 import com.unlimitedcloud.ui.components.ShimmerBlock
 import com.unlimitedcloud.ui.components.cloudFileKind
+import com.unlimitedcloud.ui.components.mimeTypeFor
 import com.unlimitedcloud.ui.util.formatBytes
 import com.unlimitedcloud.ui.util.formatProgress
 import kotlinx.coroutines.delay
@@ -88,6 +93,29 @@ fun FilesScreen(
     val picker = rememberLocalFilePicker { path ->
         if (path != null) {
             viewModel.upload(path, uploadFolder)
+        }
+    }
+
+    val share = rememberFileSharer { result ->
+        when (result) {
+            ShareResult.Shared -> viewModel.reportStatus("Berkas siap dibagikan")
+            ShareResult.Cancelled -> Unit
+            is ShareResult.Failed -> viewModel.reportError("Gagal membagikan: ${result.message}")
+        }
+    }
+
+    // Sharing needs TDLib's local copy, so the download runs first and the
+    // chooser opens as soon as the file is available.
+    val shareFile: (CloudFile) -> Unit = { file ->
+        viewModel.reportStatus("Menyiapkan ${file.name} untuk dibagikan…")
+        viewModel.download(file) { path ->
+            share(
+                ShareRequest(
+                    localPath = path,
+                    fileName = file.name,
+                    mimeType = mimeTypeFor(file.name),
+                ),
+            )
         }
     }
 
@@ -146,49 +174,57 @@ fun FilesScreen(
                     enabled = !state.loading,
                 )
 
-                Box {
-                    IconPillButton(
-                        icon = AppIcons.Tune,
-                        contentDescription = "Urutkan berkas",
-                        onClick = { showSortMenu = true },
-                    )
-                    DropdownMenu(
-                        expanded = showSortMenu,
-                        onDismissRequest = { showSortMenu = false },
-                    ) {
-                        FileSort.entries.forEach { sort ->
-                            DropdownMenuItem(
-                                text = { Text("Urutkan: ${sort.label}") },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = if (state.sort == sort) {
-                                            AppIcons.Check
-                                        } else {
-                                            AppIcons.Tune
-                                        },
-                                        contentDescription = null,
-                                        tint = if (state.sort == sort) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                        },
-                                    )
-                                },
-                                onClick = {
-                                    showSortMenu = false
-                                    viewModel.setSort(sort)
-                                },
-                            )
-                        }
-                    }
-                }
-
                 if (expanded) {
+                    Box {
+                        IconPillButton(
+                            icon = AppIcons.Tune,
+                            contentDescription = "Urutkan berkas",
+                            onClick = { showSortMenu = true },
+                        )
+                        SortMenu(
+                            expanded = showSortMenu,
+                            current = state.sort,
+                            onDismiss = { showSortMenu = false },
+                            onSelect = { sort ->
+                                showSortMenu = false
+                                viewModel.setSort(sort)
+                            },
+                        )
+                    }
+
                     GradientButton(
                         text = "Unggah",
                         onClick = { showUploadDialog = true },
                         icon = AppIcons.Upload,
                     )
+                }
+            }
+
+            // On compact screens the sort control gets its own row so the search
+            // field and the round action buttons never squeeze each other out.
+            if (!expanded) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box {
+                        CompactSortButton(
+                            label = state.sort.label,
+                            onClick = { showSortMenu = true },
+                        )
+                        SortMenu(
+                            expanded = showSortMenu,
+                            current = state.sort,
+                            onDismiss = { showSortMenu = false },
+                            onSelect = { sort ->
+                                showSortMenu = false
+                                viewModel.setSort(sort)
+                            },
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
                 }
             }
 
@@ -262,8 +298,9 @@ fun FilesScreen(
                     loadingMore = state.loadingMore,
                     canLoadMore = state.canLoadMore,
                     onLoadMore = viewModel::loadMore,
-                    onDownload = viewModel::download,
+                    onDownload = { viewModel.download(it) },
                     onDelete = { deleteTarget = it },
+                    onShare = shareFile,
                 )
 
                 else -> FileList(
@@ -272,8 +309,9 @@ fun FilesScreen(
                     loadingMore = state.loadingMore,
                     canLoadMore = state.canLoadMore,
                     onLoadMore = viewModel::loadMore,
-                    onDownload = viewModel::download,
+                    onDownload = { viewModel.download(it) },
                     onDelete = { deleteTarget = it },
+                    onShare = shareFile,
                 )
             }
         }
@@ -421,6 +459,7 @@ private fun FileList(
     onLoadMore: () -> Unit,
     onDownload: (CloudFile) -> Unit,
     onDelete: (CloudFile) -> Unit,
+    onShare: (CloudFile) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -434,6 +473,7 @@ private fun FileList(
                 expanded = false,
                 onDownload = { onDownload(file) },
                 onDelete = { onDelete(file) },
+                onShare = { onShare(file) },
             )
         }
 
@@ -457,6 +497,7 @@ private fun FileGrid(
     onLoadMore: () -> Unit,
     onDownload: (CloudFile) -> Unit,
     onDelete: (CloudFile) -> Unit,
+    onShare: (CloudFile) -> Unit,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 300.dp),
@@ -472,6 +513,7 @@ private fun FileGrid(
                 expanded = true,
                 onDownload = { onDownload(file) },
                 onDelete = { onDelete(file) },
+                onShare = { onShare(file) },
             )
         }
 
@@ -493,6 +535,7 @@ private fun FileCard(
     expanded: Boolean,
     onDownload: () -> Unit,
     onDelete: () -> Unit,
+    onShare: () -> Unit,
 ) {
     val kind = cloudFileKind(file.name)
     val meta = listOfNotNull(
@@ -527,6 +570,7 @@ private fun FileCard(
                         FileActionsMenu(
                             onDownload = onDownload,
                             onDelete = onDelete,
+                            onShare = onShare,
                         )
                     }
                 }
@@ -604,6 +648,7 @@ private fun FileCard(
                     FileActionsMenu(
                         onDownload = onDownload,
                         onDelete = onDelete,
+                        onShare = onShare,
                     )
                 }
             }
@@ -615,6 +660,7 @@ private fun FileCard(
 private fun FileActionsMenu(
     onDownload: () -> Unit,
     onDelete: () -> Unit,
+    onShare: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -629,6 +675,20 @@ private fun FileActionsMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
+            DropdownMenuItem(
+                text = { Text("Bagikan") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = AppIcons.Share,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    onShare()
+                },
+            )
             DropdownMenuItem(
                 text = { Text("Unduh") },
                 leadingIcon = {
@@ -685,6 +745,69 @@ private fun LoadMoreRow(
             enabled = !loadingMore,
         ) {
             Text(if (loadingMore) "Memuat…" else "Muat lebih banyak")
+        }
+    }
+}
+
+@Composable
+private fun SortMenu(
+    expanded: Boolean,
+    current: FileSort,
+    onDismiss: () -> Unit,
+    onSelect: (FileSort) -> Unit,
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+    ) {
+        FileSort.entries.forEach { sort ->
+            DropdownMenuItem(
+                text = { Text("Urutkan: ${sort.label}") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = if (current == sort) AppIcons.Check else AppIcons.Tune,
+                        contentDescription = null,
+                        tint = if (current == sort) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                },
+                onClick = { onSelect(sort) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactSortButton(label: String, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = AppIcons.Tune,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                text = "Urutkan: $label",
+                style = MaterialTheme.typography.labelMedium,
+            )
+            Icon(
+                imageVector = AppIcons.ChevronDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp),
+            )
         }
     }
 }

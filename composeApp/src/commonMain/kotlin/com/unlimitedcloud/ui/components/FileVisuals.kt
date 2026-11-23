@@ -53,6 +53,39 @@ fun cloudFileKind(fileName: String): CloudFileKind {
     }
 }
 
+/** Best-effort MIME type for the share sheet, derived from the file name. */
+fun mimeTypeFor(fileName: String): String {
+    return when (fileName.substringAfterLast('.', "").lowercase()) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        "heic" -> "image/heic"
+        "avif" -> "image/avif"
+        "svg" -> "image/svg+xml"
+        "mp4" -> "video/mp4"
+        "mkv" -> "video/x-matroska"
+        "mov" -> "video/quicktime"
+        "webm" -> "video/webm"
+        "mp3" -> "audio/mpeg"
+        "wav" -> "audio/wav"
+        "flac" -> "audio/flac"
+        "ogg" -> "audio/ogg"
+        "m4a" -> "audio/mp4"
+        "zip" -> "application/zip"
+        "rar" -> "application/vnd.rar"
+        "7z" -> "application/x-7z-compressed"
+        "tar", "gz" -> "application/gzip"
+        "pdf" -> "application/pdf"
+        "txt" -> "text/plain"
+        "md" -> "text/markdown"
+        "json" -> "application/json"
+        "csv" -> "text/csv"
+        "apk" -> "application/vnd.android.package-archive"
+        else -> "application/octet-stream"
+    }
+}
+
 @Composable
 fun FileKindIcon(
     kind: CloudFileKind,

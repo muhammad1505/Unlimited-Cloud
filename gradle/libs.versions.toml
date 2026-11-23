@@ -11,6 +11,8 @@ sqldelight = "2.4.1"
 okio = "3.18.2"
 filekit = "0.17.1"
 activityCompose = "1.13.0"
+androidxCore = "1.16.0"
+androidxWork = "2.12.0"
 tdlightNatives = "4.0.308"
 tdlight = "3.5.9+td.1.8.68"
 jna = "5.14.0"
@@ -44,6 +46,8 @@ compose-animation = { module = "org.jetbrains.compose.animation:animation", vers
 filekit-dialogs-compose = { module = "io.github.vinceglb:filekit-dialogs-compose", version.ref = "filekit" }
 
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+androidx-core = { module = "androidx.core:core", version.ref = "androidxCore" }
+androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "androidxWork" }
 
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 tdlight-natives-linux = { module = "it.tdlight:tdlight-natives-linux-amd64", version.ref = "tdlightNatives" }

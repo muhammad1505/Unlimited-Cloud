@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Paths exposed by the share-sheet FileProvider. The sharer copies the file
+     into cache/shared first, so no other directory can be requested. -->
+<paths>
+    <cache-path name="shared" path="shared/" />
+</paths>

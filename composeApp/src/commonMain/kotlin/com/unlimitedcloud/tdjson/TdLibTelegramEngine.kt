@@ -1,5 +1,6 @@
 package com.unlimitedcloud.tdjson
 
+import com.unlimitedcloud.AppBuildInfo
 import com.unlimitedcloud.auth.AuthUiState
 import com.unlimitedcloud.auth.TelegramEngine
 import com.unlimitedcloud.config.TelegramConfig
@@ -195,7 +196,7 @@ class TdLibTelegramEngine(
             put("system_language_code", "en")
             put("device_model", "Unlimited Cloud")
             put("system_version", "1.0")
-            put("application_version", "1.0.1")
+            put("application_version", AppBuildInfo.VERSION_NAME)
             put("enable_storage_optimizer", true)
             put("ignore_file_names", false)
         }
