@@ -163,12 +163,7 @@ jobs:
               unzip -p "$lib" AndroidManifest.xml 2>/dev/null | grep -qa 'android.permission.DUMP' && echo "lib: $lib"
             done || true
             echo "--- packaged manifest around DUMP ---"
-            python3 -c "import glob, zipfile
-for apk in glob.glob('androidApp/build/outputs/apk/release/*.apk'):
-    blob = zipfile.ZipFile(apk).read('AndroidManifest.xml')
-    at = blob.find(b'android.permission.DUMP')
-    print(apk, 'offset', at, 'of', len(blob))
-    print(blob[max(0, at - 60):at + 80])"
+            python3 scripts/apk-permission-context.py androidApp/build/outputs/apk/release/*.apk
             exit 1
           fi
 
