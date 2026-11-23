@@ -21,6 +21,14 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.3.2 — 23 November 2026
+
+### Perbaikan
+
+- Penyimpanan dibuat sebagai supergroup privat biasa lalu topiknya diaktifkan, bukan dengan meminta forum saat pembuatan. Log perangkat menunjukkan permintaan forum justru menghasilkan channel yang menolak diaktifkan sebagai forum, jadi penyimpanan kini tidak pernah jatuh ke channel.
+- Chat hasil pembuatan diperiksa dulu: kalau bukan supergroup privat, chat itu dihapus lagi dan aplikasi melaporkan alasannya di Pengaturan → Penyimpanan.
+- Setelah pembuatan gagal, aplikasi tidak lagi membuat grup/channel baru berulang kali dalam satu menit, sehingga tidak ada tumpukan chat penyimpanan yang tertinggal.
+
 ## 1.3.1 — 23 November 2026
 
 ### Perbaikan

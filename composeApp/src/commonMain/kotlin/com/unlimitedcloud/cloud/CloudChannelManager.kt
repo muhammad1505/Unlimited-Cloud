@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
@@ -17,6 +18,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 
 sealed interface CloudChannelState {
     data object Idle : CloudChannelState
@@ -58,6 +62,13 @@ class CloudChannelManager(
         /** `getChat` probes for the stored id before it is declared missing. */
         private const val CHECK_ATTEMPTS = 2
         private const val CHECK_DELAY_MILLIS = 500L
+
+        /** Forum toggles tried after the group is created, and the gap between them. */
+        private const val FORUM_TOGGLE_ATTEMPTS = 3
+        private const val FORUM_TOGGLE_DELAY_MILLIS = 1_000L
+
+        /** A creation that just failed is not repeated for a minute. */
+        private val CREATE_RETRY_COOLDOWN = 60.seconds
     }
 
     private val state = MutableStateFlow<CloudChannelState>(CloudChannelState.Idle)
@@ -68,6 +79,9 @@ class CloudChannelManager(
 
     /** Why the last `createNewSupergroupChat` was refused, for the settings card. */
     private var lastCreateError: String? = null
+
+    /** When creation last failed, so a retry loop cannot spawn group after group. */
+    private var lastCreateFailure: TimeMark? = null
 
     /** Forgets the storage chat of the previous account after a logout. */
     fun forget() {
@@ -124,11 +138,24 @@ class CloudChannelManager(
             preferences.setCloudRootChatId(null)
         }
 
+        // `ensureRootChannel` is called again on every retry, and each attempt
+        // used to create another chat. A failure shortly before is reported
+        // instead of creating a fresh group.
+        val recentlyFailed =
+            lastCreateFailure?.let { it.elapsedNow() < CREATE_RETRY_COOLDOWN } == true
+        if (recentlyFailed) {
+            state.value = CloudChannelState.Failed(
+                lastCreateError ?: "grup $ROOT_STORAGE_TITLE tidak dapat dibuat",
+            )
+            return null
+        }
+
         val created = runCatching { createForumGroup() }.getOrElse { failure ->
             state.value = CloudChannelState.Failed(failure.message ?: "gagal membuat grup topik")
             return null
         }
         if (created == null) {
+            lastCreateFailure = TimeSource.Monotonic.markNow()
             val reason = lastCreateError
             state.value = CloudChannelState.Failed(
                 if (reason.isNullOrBlank()) {
@@ -257,36 +284,48 @@ class CloudChannelManager(
     }.getOrDefault(emptyList())
 
     /**
-     * Creates the storage supergroup and proves it really is a private forum.
+     * Creates a private supergroup and turns it into a forum.
      *
-     * `is_forum` in the creation call is not honoured by every server version,
-     * so the chat is read back and topics are enabled with
-     * `toggleSupergroupIsForum` when they are missing. A chat that is still a
-     * channel or a plain group is deleted instead of being used as storage.
+     * Asking `createNewSupergroupChat` for a forum does not work on every
+     * Telegram/TDLib pair: as the logs showed, the call came back as a
+     * broadcast channel, and such a chat can never become a forum
+     * ("Forums can be enabled in supergroups only"). An ordinary private
+     * supergroup is created instead, its type is checked, and topics are
+     * switched on afterwards with `toggleSupergroupIsForum`.
      */
     private suspend fun createForumGroup(): Long? {
-        val chatId = requestSupergroup(isForum = true)
-            ?: requestSupergroup(isForum = false)
+        // `location` is null so Telegram creates an ordinary supergroup rather
+        // than a location-based one; older TDLib builds insist on the field and
+        // are retried with a placeholder.
+        val chatId = requestSupergroup(isForum = false, withLocation = false)
+            ?: requestSupergroup(isForum = false, withLocation = true)
             ?: return null
+
+        if (!isPrivateGroup(chatId)) {
+            logDiagnostic(LOG_TAG, "chat $chatId bukan supergroup privat; dihapus lagi")
+            if (lastCreateError.isNullOrBlank()) lastCreateError = "chat baru bukan supergroup"
+            deleteStorageChat(chatId)
+            return null
+        }
 
         if (checkWithRetries(chatId) == Check.Valid) {
             logDiagnostic(LOG_TAG, "grup topik siap: $chatId")
             return chatId
         }
 
-        logDiagnostic(LOG_TAG, "topik belum aktif di chat $chatId, mengaktifkan")
+        logDiagnostic(LOG_TAG, "mengaktifkan topik di grup $chatId")
         if (enableTopics(chatId)) {
-            logDiagnostic(LOG_TAG, "topik aktif di chat $chatId")
+            logDiagnostic(LOG_TAG, "grup topik siap: $chatId")
             return chatId
         }
 
         logDiagnostic(LOG_TAG, "topik tidak bisa diaktifkan; chat $chatId dihapus lagi")
-        lastCreateError = "topik forum tidak bisa diaktifkan"
+        if (lastCreateError.isNullOrBlank()) lastCreateError = "topik forum tidak bisa diaktifkan"
         deleteStorageChat(chatId)
         return null
     }
 
-    private suspend fun requestSupergroup(isForum: Boolean): Long? {
+    private suspend fun requestSupergroup(isForum: Boolean, withLocation: Boolean): Long? {
         val response = runCatching {
             session.call(
                 buildJsonObject {
@@ -295,26 +334,26 @@ class CloudChannelManager(
                     put("is_forum", isForum)
                     put("is_channel", false)
                     put("description", ROOT_STORAGE_DESCRIPTION)
-                    // Required by TDLib even for a private group: without it the
-                    // whole request is rejected and no chat is created at all.
-                    put("location", chatLocationJson())
+                    put("location", if (withLocation) chatLocationJson() else JsonNull)
                 },
             )
         }.getOrElse { failure ->
             lastCreateError = failure.message
-            logDiagnostic(LOG_TAG, "grup topik gagal dibuat: ${failure.message}")
+            logDiagnostic(LOG_TAG, "grup penyimpanan gagal dibuat: ${failure.message}")
             return null
         }
         if (response.isError()) {
             lastCreateError = response["message"]?.jsonPrimitive?.contentOrNull
-            logDiagnostic(LOG_TAG, "grup topik ditolak TDLib: ${lastCreateError.orEmpty()}")
+            logDiagnostic(
+                LOG_TAG,
+                "grup penyimpanan ditolak TDLib (forum=$isForum, location=$withLocation): " +
+                    lastCreateError.orEmpty(),
+            )
             return null
         }
-        val chatId = response["id"]?.jsonPrimitive?.longOrNull
-        if (chatId != null) {
-            lastCreateError = null
-            logDiagnostic(LOG_TAG, "chat penyimpanan dibuat: $chatId (forum=$isForum)")
-        }
+        val chatId = response["id"]?.jsonPrimitive?.longOrNull ?: return null
+        lastCreateError = null
+        logDiagnostic(LOG_TAG, "chat penyimpanan dibuat: $chatId (forum=$isForum)")
         return chatId
     }
 
@@ -332,35 +371,54 @@ class CloudChannelManager(
         )
     }
 
-    /** Turns topics on for a chat that was created as a plain supergroup. */
+    /** True when the chat is a supergroup that is not a broadcast channel. */
+    private suspend fun isPrivateGroup(chatId: Long): Boolean {
+        val supergroup = supergroupJson(chatId) ?: return false
+        return supergroup["is_channel"]?.jsonPrimitive?.booleanOrNull != true
+    }
+
+    /** Turns topics on and waits for Telegram to report the group as a forum. */
     private suspend fun enableTopics(chatId: Long): Boolean {
-        val supergroupId = supergroupIdOf(chatId) ?: return false
+        var failure: String? = null
+        repeat(FORUM_TOGGLE_ATTEMPTS) { attempt ->
+            val supergroupId = supergroupIdOf(chatId)
+            if (supergroupId != null) {
+                val response = runCatching {
+                    session.call(
+                        buildJsonObject {
+                            put("@type", "toggleSupergroupIsForum")
+                            put("supergroup_id", supergroupId)
+                            put("is_forum", true)
+                            put("has_forum_tabs", true)
+                        },
+                    )
+                }.getOrNull()
+                if (response != null && response.isError()) {
+                    failure = response["message"]?.jsonPrimitive?.contentOrNull
+                    logDiagnostic(LOG_TAG, "aktifkan topik ditolak TDLib: ${failure.orEmpty()}")
+                }
+            }
+            repeat(3) {
+                if (checkChat(chatId) == Check.Valid) return true
+                delay(CHECK_DELAY_MILLIS)
+            }
+            delay(FORUM_TOGGLE_DELAY_MILLIS * (attempt + 1))
+        }
+        if (!failure.isNullOrBlank()) lastCreateError = failure
+        return false
+    }
+
+    private suspend fun supergroupJson(chatId: Long): JsonObject? {
+        val supergroupId = supergroupIdOf(chatId) ?: return null
         val response = runCatching {
             session.call(
                 buildJsonObject {
-                    put("@type", "toggleSupergroupIsForum")
+                    put("@type", "getSupergroup")
                     put("supergroup_id", supergroupId)
-                    put("is_forum", true)
-                    put("has_forum_tabs", true)
                 },
             )
-        }.getOrElse { failure ->
-            logDiagnostic(LOG_TAG, "aktifkan topik gagal: ${failure.message}")
-            return false
-        }
-        if (response.isError()) {
-            logDiagnostic(
-                LOG_TAG,
-                "aktifkan topik ditolak TDLib: " +
-                    response["message"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-            )
-            return false
-        }
-        repeat(3) {
-            if (checkChat(chatId) == Check.Valid) return true
-            delay(CHECK_DELAY_MILLIS)
-        }
-        return checkChat(chatId) == Check.Valid
+        }.getOrNull() ?: return null
+        return if (response.isError()) null else response
     }
 
     private suspend fun supergroupIdOf(chatId: Long): Long? {
