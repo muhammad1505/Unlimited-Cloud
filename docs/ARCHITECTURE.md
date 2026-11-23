@@ -151,7 +151,7 @@ CHANGELOG.md
    │ generateChangelog (build)
    ▼
 ChangelogData.kt  →  AppChangelog.parseChangelog()
-   ├─ ChangelogScreen (menu Pengaturan → Pembaruan)
+   ├─ ChangelogScreen (menu Pengaturan → Tentang & bantuan → Apa yang baru)
    └─ ChangelogDialog (setelah versionCode naik)
 ```
 

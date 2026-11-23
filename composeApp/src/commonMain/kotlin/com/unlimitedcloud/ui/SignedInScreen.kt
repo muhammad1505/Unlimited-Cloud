@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -156,7 +155,6 @@ fun SignedInScreen(
                     onSelect = selectSection,
                     userName = state.displayName,
                     activeTransfers = filesState.activeTransfers.size,
-                    onLogout = { showLogout = true },
                 )
             }
 
@@ -205,10 +203,10 @@ fun SignedInScreen(
                                 filesState = filesState,
                                 themeMode = themeMode,
                                 onThemeModeChange = onThemeModeChange,
-                                engine = engine,
                                 viewModel = viewModel,
                                 onOpenLog = { overlay = OVERLAY_LOG },
                                 onOpenChangelog = { overlay = OVERLAY_CHANGELOG },
+                                onLogout = { showLogout = true },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -321,7 +319,6 @@ private fun AppNavigationRail(
     onSelect: (AppSection) -> Unit,
     userName: String,
     activeTransfers: Int,
-    onLogout: () -> Unit,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -356,14 +353,6 @@ private fun AppNavigationRail(
                 size = 42.dp,
                 modifier = Modifier.clickable { onSelect(AppSection.Settings) },
             )
-            Spacer(Modifier.height(6.dp))
-            IconButton(onClick = onLogout) {
-                Icon(
-                    imageVector = AppIcons.Logout,
-                    contentDescription = "Keluar",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
     }
 }

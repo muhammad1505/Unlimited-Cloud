@@ -34,8 +34,8 @@ Android dan Desktop memakai kode UI, domain, dan state management yang sama.
 1. Splash bermerek → login Telegram.
 2. **Berkas** — ringkasan penyimpanan, pencarian, filter folder, kartu berkas.
 3. **Transfer** — unggahan/unduhan aktif dan riwayat.
-4. **Pengaturan** — profil, tema, penyimpanan, galeri, baterai, pembaruan,
-   diagnostik, dan keluar akun.
+4. **Pengaturan** — profil, tema, penyimpanan, galeri, baterai, tentang &
+   bantuan (changelog dan log), serta keluar akun.
 5. **Changelog** — riwayat rilis yang sama dengan isi `CHANGELOG.md`.
 
 ## Kebutuhan

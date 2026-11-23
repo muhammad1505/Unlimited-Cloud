@@ -712,11 +712,17 @@ class CloudFilesViewModel(
         refreshBackgroundSchedule()
     }
 
-    /** Forgets which photos were uploaded, so the next sync offers them again. */
+    /**
+     * Forgets which photos were uploaded, so the next sync offers them again.
+     *
+     * This no longer starts the sync itself: the Settings action used to look
+     * like a second "Sinkronkan sekarang" and could re-upload the whole gallery
+     * without the user realising. The next explicit sync picks the photos up.
+     */
     fun resetGallerySync() {
         preferences.clearGallerySyncedKeys()
         state.update { it.copy(gallerySyncedCount = 0) }
-        syncGallery(auto = false)
+        reportStatus("Riwayat sinkron diatur ulang. Tekan Sinkronkan sekarang untuk mengunggah ulang.")
     }
 
     /**

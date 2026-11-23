@@ -21,6 +21,17 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.2.7 — 23 November 2026
+
+### Perbaikan
+
+- Menu Pengaturan dirapikan: kartu Pembaruan dan Tentang digabung, versi aplikasi hanya muncul sekali, dan baris "Apa yang baru" serta "Log diagnostik" langsung bisa diklik tanpa tombol ganda di bawahnya.
+- Pengaturan galeri disatukan dalam satu kartu: folder, unggah otomatis, sinkron latar belakang, simpan foto yang diunduh, dan aksi sinkron kini berada di tempat yang sama.
+- Logout hanya punya satu alur konfirmasi. Ikon keluar duplikat di rail desktop dihapus; aksi keluar tetap tersedia di Pengaturan dan dialognya dikelola oleh shell aplikasi.
+- "Atur ulang riwayat" tidak lagi langsung mengunggah ulang seluruh galeri. Konfirmasi menjelaskan dampaknya, dan foto lama baru diproses saat Anda menekan "Sinkronkan sekarang".
+- Kartu baterai lebih ringkas: status, saran sesuai versi Android, dan pintasan ke pengaturan sistem tersusun dalam satu tempat.
+- Aksi "Muat ulang daftar" di Penyimpanan diberi nama yang jelas agar tidak tertukar dengan sinkronisasi galeri.
+
 ## 1.2.6 — 23 November 2026
 
 ### Perbaikan

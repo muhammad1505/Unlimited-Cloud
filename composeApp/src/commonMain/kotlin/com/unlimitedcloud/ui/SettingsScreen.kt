@@ -44,7 +44,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.unlimitedcloud.AppBuildInfo
 import com.unlimitedcloud.auth.AuthUiState
-import com.unlimitedcloud.auth.TelegramEngine
 import com.unlimitedcloud.cloud.CloudChannelState
 import com.unlimitedcloud.cloud.CloudFilesViewModel
 import com.unlimitedcloud.cloud.ExplorerUiState
@@ -53,9 +52,11 @@ import com.unlimitedcloud.platform.BatteryOptimizationSnapshot
 import com.unlimitedcloud.platform.BatterySettingsDestination
 import com.unlimitedcloud.platform.rememberBatteryOptimizationController
 import com.unlimitedcloud.platform.rememberGalleryFolderPicker
+import com.unlimitedcloud.ui.components.ActionRow
 import com.unlimitedcloud.ui.components.AppAvatar
 import com.unlimitedcloud.ui.components.AppIcons
 import com.unlimitedcloud.ui.components.ConfirmDialog
+import com.unlimitedcloud.ui.components.InfoBanner
 import com.unlimitedcloud.ui.components.InfoRow
 import com.unlimitedcloud.ui.components.SectionHeader
 import com.unlimitedcloud.ui.components.StatusPill
@@ -64,6 +65,14 @@ import com.unlimitedcloud.ui.theme.BrandGradientDeep
 import com.unlimitedcloud.ui.theme.ThemeMode
 import com.unlimitedcloud.ui.util.formatBytes
 
+/**
+ * Account, appearance and storage settings.
+ *
+ * One destination is shown once: rows that open a page carry a chevron instead
+ * of a matching button below, the version appears in a single card, and the
+ * gallery upload/download switches live together. Logout is requested from the
+ * signed-in shell so the confirmation dialog exists in one place only.
+ */
 @Composable
 fun SettingsScreen(
     user: AuthUiState.Ready,
@@ -71,13 +80,13 @@ fun SettingsScreen(
     filesState: ExplorerUiState,
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
-    engine: TelegramEngine,
     viewModel: CloudFilesViewModel,
     onOpenLog: () -> Unit,
     onOpenChangelog: () -> Unit,
+    onLogout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var showLogout by remember { mutableStateOf(false) }
+    var showResetGallery by remember { mutableStateOf(false) }
     var batteryFeedback by remember { mutableStateOf<String?>(null) }
     val logEntries by LogStore.entries.collectAsState()
 
@@ -97,90 +106,34 @@ fun SettingsScreen(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         ProfileCard(user = user)
 
-        SurfaceCard(modifier = Modifier.fillMaxWidth()) {
-            SectionHeader(title = "Tampilan")
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = "Tema aplikasi",
-                style = MaterialTheme.typography.bodyMedium,
+        if (filesState.status != null) {
+            InfoBanner(
+                message = filesState.status.orEmpty(),
+                onDismiss = viewModel::dismissStatus,
             )
-            Text(
-                text = "Pilihan disimpan otomatis di perangkat ini.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        }
+        if (filesState.error != null) {
+            InfoBanner(
+                message = filesState.error.orEmpty(),
+                isError = true,
+                onDismiss = viewModel::clearError,
             )
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                ThemeOption(
-                    label = "Sistem",
-                    icon = AppIcons.Tune,
-                    selected = themeMode == ThemeMode.System,
-                    onClick = { onThemeModeChange(ThemeMode.System) },
-                )
-                ThemeOption(
-                    label = "Terang",
-                    icon = AppIcons.Sun,
-                    selected = themeMode == ThemeMode.Light,
-                    onClick = { onThemeModeChange(ThemeMode.Light) },
-                )
-                ThemeOption(
-                    label = "Gelap",
-                    icon = AppIcons.Moon,
-                    selected = themeMode == ThemeMode.Dark,
-                    onClick = { onThemeModeChange(ThemeMode.Dark) },
-                )
-            }
         }
 
-        SurfaceCard(modifier = Modifier.fillMaxWidth()) {
-            SectionHeader(title = "Penyimpanan")
-            Spacer(Modifier.height(4.dp))
-            InfoRow(
-                icon = AppIcons.Cloud,
-                title = "Channel penyimpanan",
-                value = channelLabel(channelState),
-                tint = Color(0xFF10B981),
-            )
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 2.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-            )
-            InfoRow(
-                icon = AppIcons.Folder,
-                title = "Berkas terindeks",
-                value = "${filesState.files.size} berkas · ${filesState.folders.size} folder",
-            )
-            InfoRow(
-                icon = AppIcons.Storage,
-                title = "Total ukuran",
-                value = formatBytes(filesState.totalBytes),
-                tint = MaterialTheme.colorScheme.secondary,
-            )
-            Spacer(Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = viewModel::refresh) {
-                    Icon(
-                        imageVector = AppIcons.Refresh,
-                        contentDescription = null,
-                        modifier = Modifier.size(17.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Sinkronkan ulang")
-                }
-            }
-        }
+        AppearanceCard(
+            themeMode = themeMode,
+            onThemeModeChange = onThemeModeChange,
+        )
+
+        StorageCard(
+            channelState = channelState,
+            state = filesState,
+            onRefresh = viewModel::refresh,
+        )
 
         GalleryCard(
             state = filesState,
@@ -188,198 +141,50 @@ fun SettingsScreen(
             onRemoveFolder = viewModel::removeGalleryFolder,
             onGalleryAutoSyncChange = viewModel::setGalleryAutoSync,
             onBackgroundSyncChange = viewModel::setGalleryBackgroundSync,
+            onAutoSaveChange = viewModel::setAutoSavePhotos,
             onSyncNow = { viewModel.syncGallery() },
-            onResetSync = viewModel::resetGallerySync,
+            onResetSync = { showResetGallery = true },
         )
 
-        if (filesState.autoSaveSupported) {
-            AutoSaveCard(
-                enabled = filesState.autoSavePhotos,
-                onChange = viewModel::setAutoSavePhotos,
-            )
-        }
-
         if (battery.supported) {
-            SurfaceCard(modifier = Modifier.fillMaxWidth()) {
-                SectionHeader(
-                    title = "Optimasi baterai",
-                    action = {
-                        TextButton(onClick = { battery = batteryController.snapshot() }) {
-                            Text("Perbarui")
-                        }
-                    },
-                )
-                Spacer(Modifier.height(2.dp))
-                // The system apps carry this same name and package, so naming them
-                // here is what lets the user find the app in the settings list.
-                battery.appLabel?.let { label ->
-                    InfoRow(
-                        icon = AppIcons.Info,
-                        title = label,
-                        value = battery.packageName.orEmpty(),
-                        tint = MaterialTheme.colorScheme.secondary,
-                    )
-                }
-                InfoRow(
-                    icon = AppIcons.Battery,
-                    title = if (battery.ignoringOptimizations) {
-                        "Sudah dikecualikan"
-                    } else {
-                        "Masih dioptimalkan sistem"
-                    },
-                    value = if (battery.ignoringOptimizations) {
-                        "Unggahan besar tidak akan dijeda saat layar mati."
-                    } else {
-                        "Android dapat menjeda unggahan saat layar mati atau baterai lemah."
-                    },
-                    tint = if (battery.ignoringOptimizations) {
-                        Color(0xFF10B981)
-                    } else {
-                        Color(0xFFF59E0B)
-                    },
-                )
-                battery.androidVersion?.let { version ->
-                    InfoRow(
-                        icon = AppIcons.Phone,
-                        title = "Versi Android",
-                        value = version,
-                        tint = MaterialTheme.colorScheme.secondary,
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = batteryGuidance(battery),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                battery.oemHint?.let { hint ->
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = "Perangkat ${battery.manufacturer.orEmpty()} punya pengaturan " +
-                            "autostart terpisah agar sinkronisasi tidak dihentikan setelah reboot.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                    ) {
-                        TextButton(
-                            onClick = {
-                                batteryFeedback = when (batteryController.openOemSettings()) {
-                                    BatterySettingsDestination.Oem -> "Pengaturan autostart dibuka"
-                                    BatterySettingsDestination.AppInfo -> "Pintasan autostart " +
-                                        "tidak bisa dibuka di perangkat ini; Info aplikasi " +
-                                        "dibuka, pilih Baterai di sana"
-                                    BatterySettingsDestination.Unavailable -> "Perangkat ini tidak " +
-                                        "menyediakan pengaturan autostart"
-                                }
-                                battery = batteryController.snapshot()
-                            },
-                        ) {
-                            Text(hint)
-                        }
+            BatteryCard(
+                battery = battery,
+                feedback = batteryFeedback,
+                onRefresh = {
+                    batteryFeedback = null
+                    battery = batteryController.snapshot()
+                },
+                onOpenAppInfo = {
+                    batteryController.openAppInfo()
+                    batteryFeedback = "Info aplikasi dibuka"
+                    battery = batteryController.snapshot()
+                },
+                onOpenBatterySettings = {
+                    batteryController.openSystemSettings()
+                    batteryFeedback = "Pengaturan baterai dibuka"
+                    battery = batteryController.snapshot()
+                },
+                onOpenOemSettings = {
+                    batteryFeedback = when (batteryController.openOemSettings()) {
+                        BatterySettingsDestination.Oem -> "Pengaturan autostart dibuka"
+                        BatterySettingsDestination.AppInfo -> "Pintasan autostart tidak bisa " +
+                            "dibuka di perangkat ini; Info aplikasi dibuka, pilih Baterai di sana"
+                        BatterySettingsDestination.Unavailable -> "Perangkat ini tidak " +
+                            "menyediakan pengaturan autostart"
                     }
-                }
-                if (batteryFeedback != null) {
-                    Text(
-                        text = batteryFeedback.orEmpty(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    TextButton(
-                        onClick = {
-                            batteryController.openAppInfo()
-                            batteryFeedback = "Info aplikasi dibuka"
-                            battery = batteryController.snapshot()
-                        },
-                    ) {
-                        Text("Info aplikasi")
-                    }
-                    TextButton(
-                        onClick = {
-                            batteryController.openSystemSettings()
-                            batteryFeedback = "Pengaturan baterai dibuka"
-                            battery = batteryController.snapshot()
-                        },
-                    ) {
-                        Text("Pengaturan baterai")
-                    }
-                }
-            }
+                    battery = batteryController.snapshot()
+                },
+            )
         }
 
-        SurfaceCard(modifier = Modifier.fillMaxWidth()) {
-            SectionHeader(title = "Pembaruan")
-            Spacer(Modifier.height(4.dp))
-            InfoRow(
-                icon = AppIcons.History,
-                title = "Apa yang baru",
-                value = "Versi ${AppBuildInfo.VERSION_NAME} · changelog lengkap",
-            )
-            Spacer(Modifier.height(2.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = onOpenChangelog) { Text("Buka changelog") }
-            }
-        }
-
-        SurfaceCard(modifier = Modifier.fillMaxWidth()) {
-            SectionHeader(title = "Diagnostik")
-            Spacer(Modifier.height(4.dp))
-            InfoRow(
-                icon = AppIcons.Tune,
-                title = "Log aktivitas",
-                value = "${logEntries.size} baris tersimpan di perangkat ini",
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "Mencatat transisi login, pesan TDLib, dan setiap transfer. " +
-                    "Berguna saat ada perilaku yang tidak sesuai.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(2.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = onOpenLog) { Text("Buka log") }
-            }
-        }
-
-        SurfaceCard(modifier = Modifier.fillMaxWidth()) {
-            SectionHeader(title = "Tentang")
-            Spacer(Modifier.height(4.dp))
-            InfoRow(
-                icon = AppIcons.Cloud,
-                title = "Unlimited Cloud",
-                value = "Versi ${AppBuildInfo.VERSION_NAME} · Compose Multiplatform",
-            )
-            InfoRow(
-                icon = AppIcons.Shield,
-                title = "Mesin Telegram",
-                value = "TDLib · koneksi langsung, tanpa server perantara",
-                tint = MaterialTheme.colorScheme.secondary,
-            )
-            InfoRow(
-                icon = AppIcons.Lock,
-                title = "Privasi",
-                value = "Berkas tetap berada di akun Telegram Anda",
-                tint = Color(0xFF10B981),
-            )
-        }
+        AboutCard(
+            logCount = logEntries.size,
+            onOpenChangelog = onOpenChangelog,
+            onOpenLog = onOpenLog,
+        )
 
         OutlinedButton(
-            onClick = { showLogout = true },
+            onClick = onLogout,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(50.dp),
@@ -411,19 +216,114 @@ fun SettingsScreen(
         )
     }
 
-    if (showLogout) {
+    if (showResetGallery) {
         ConfirmDialog(
-            title = "Keluar dari akun?",
-            message = "Sesi Telegram akan ditutup. Berkas yang sudah diunggah tetap aman di channel pribadi Anda.",
-            confirmLabel = "Keluar",
+            title = "Atur ulang riwayat sinkron?",
+            message = "Riwayat foto yang sudah diunggah akan dikosongkan. Foto lama " +
+                "dianggap baru pada sinkron berikutnya, jadi bisa terunggah ulang. " +
+                "Tindakan ini tidak menghapus berkas di Telegram.",
+            confirmLabel = "Atur ulang",
             onConfirm = {
-                showLogout = false
-                viewModel.forgotAccount()
-                engine.logout()
+                showResetGallery = false
+                viewModel.resetGallerySync()
             },
-            onDismiss = { showLogout = false },
+            onDismiss = { showResetGallery = false },
             destructive = true,
         )
+    }
+}
+
+@Composable
+private fun AppearanceCard(
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit,
+) {
+    SurfaceCard(modifier = Modifier.fillMaxWidth()) {
+        SectionHeader(title = "Tampilan")
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Tema aplikasi",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            text = "Pilihan disimpan otomatis di perangkat ini.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ThemeOption(
+                label = "Sistem",
+                icon = AppIcons.Tune,
+                selected = themeMode == ThemeMode.System,
+                onClick = { onThemeModeChange(ThemeMode.System) },
+            )
+            ThemeOption(
+                label = "Terang",
+                icon = AppIcons.Sun,
+                selected = themeMode == ThemeMode.Light,
+                onClick = { onThemeModeChange(ThemeMode.Light) },
+            )
+            ThemeOption(
+                label = "Gelap",
+                icon = AppIcons.Moon,
+                selected = themeMode == ThemeMode.Dark,
+                onClick = { onThemeModeChange(ThemeMode.Dark) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun StorageCard(
+    channelState: CloudChannelState,
+    state: ExplorerUiState,
+    onRefresh: () -> Unit,
+) {
+    SurfaceCard(modifier = Modifier.fillMaxWidth()) {
+        SectionHeader(title = "Penyimpanan")
+        Spacer(Modifier.height(4.dp))
+        InfoRow(
+            icon = AppIcons.Cloud,
+            title = "Channel penyimpanan",
+            value = channelLabel(channelState),
+            tint = Color(0xFF10B981),
+        )
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 2.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+        )
+        InfoRow(
+            icon = AppIcons.Folder,
+            title = "Berkas terindeks",
+            value = "${state.files.size} berkas · ${state.folders.size} folder",
+        )
+        InfoRow(
+            icon = AppIcons.Storage,
+            title = "Total ukuran",
+            value = formatBytes(state.totalBytes),
+            tint = MaterialTheme.colorScheme.secondary,
+        )
+        Spacer(Modifier.height(2.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(onClick = onRefresh, enabled = !state.loading) {
+                Icon(
+                    imageVector = AppIcons.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(if (state.loading) "Memuat…" else "Muat ulang daftar")
+            }
+        }
     }
 }
 
@@ -434,30 +334,36 @@ private fun GalleryCard(
     onRemoveFolder: (String) -> Unit,
     onGalleryAutoSyncChange: (Boolean) -> Unit,
     onBackgroundSyncChange: (Boolean) -> Unit,
+    onAutoSaveChange: (Boolean) -> Unit,
     onSyncNow: () -> Unit,
     onResetSync: () -> Unit,
 ) {
     SurfaceCard(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(
-            title = "Sinkronisasi galeri",
+            title = "Galeri",
             action = {
                 if (state.gallerySupported) {
+                    val statusColor = when {
+                        state.gallerySyncing -> MaterialTheme.colorScheme.primary
+                        state.galleryAutoSync -> Color(0xFF10B981)
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
                     StatusPill(
-                        text = if (state.galleryAutoSync) "Aktif" else "Nonaktif",
-                        color = if (state.galleryAutoSync) {
-                            Color(0xFF10B981)
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                        text = when {
+                            state.gallerySyncing -> "Menyinkronkan"
+                            state.galleryAutoSync -> "Aktif"
+                            else -> "Nonaktif"
                         },
+                        color = statusColor,
                     )
                 }
             },
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Foto dari setiap folder galeri yang Anda pilih diunggah ke folder Galeri " +
-                "di channel Telegram. Anda bisa memilih beberapa folder sekaligus; akses " +
-                "memakai pemilih folder sistem, tanpa izin penyimpanan.",
+            text = "Foto dari folder yang Anda pilih diunggah ke folder Galeri di " +
+                "channel Telegram. Pemilih folder sistem dipakai, jadi tidak perlu " +
+                "izin penyimpanan.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -534,45 +440,28 @@ private fun GalleryCard(
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
         )
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Unggah otomatis", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    text = "Saat aplikasi dibuka, semua foto baru di folder terpilih " +
-                        "diunggah. Jadwal latar belakang mengambil beberapa foto tiap " +
-                        "putaran agar tidak melewati batas waktu sistem.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(
-                checked = state.galleryAutoSync,
-                onCheckedChange = onGalleryAutoSyncChange,
-                enabled = state.galleryFolders.isNotEmpty(),
+        ToggleRow(
+            title = "Unggah otomatis",
+            description = "Saat aplikasi dibuka, semua foto baru di folder terpilih " +
+                "diunggah. Jadwal latar belakang mengambil beberapa foto tiap putaran " +
+                "agar tidak melewati batas waktu sistem.",
+            checked = state.galleryAutoSync,
+            onCheckedChange = onGalleryAutoSyncChange,
+            enabled = state.galleryFolders.isNotEmpty(),
+        )
+
+        if (state.galleryBackgroundSupported) {
+            ToggleRow(
+                title = "Sinkron saat aplikasi tertutup",
+                description = "Sistem menjalankan batch kecil kira-kira tiap 6 jam saat " +
+                    "ada internet. Tanpa layanan latar depan dan tanpa izin tambahan.",
+                checked = state.galleryBackgroundSync,
+                onCheckedChange = onBackgroundSyncChange,
+                enabled = state.galleryAutoSync && state.galleryFolders.isNotEmpty(),
             )
         }
 
-        if (state.galleryBackgroundSupported) {
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Sinkron saat aplikasi tertutup", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = "Sistem menjalankan batch kecil kira-kira tiap 6 jam saat ada " +
-                            "internet. Tanpa layanan latar depan dan tanpa izin tambahan.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    checked = state.galleryBackgroundSync,
-                    onCheckedChange = onBackgroundSyncChange,
-                    enabled = state.galleryAutoSync && state.galleryFolders.isNotEmpty(),
-                )
-            }
-        }
-
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(2.dp))
         InfoRow(
             icon = AppIcons.History,
             title = "Sinkron terakhir",
@@ -593,7 +482,7 @@ private fun GalleryCard(
                 onClick = onResetSync,
                 enabled = state.gallerySyncedCount > 0 && !state.gallerySyncing,
             ) {
-                Text("Atur ulang")
+                Text("Atur ulang riwayat")
             }
             TextButton(
                 onClick = onSyncNow,
@@ -602,35 +491,182 @@ private fun GalleryCard(
                 Text(if (state.gallerySyncing) "Menyinkronkan…" else "Sinkronkan sekarang")
             }
         }
+
+        if (state.autoSaveSupported) {
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 4.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
+            ToggleRow(
+                title = "Simpan foto yang diunduh",
+                description = "Disalin ke Pictures/Unlimited Cloud lewat MediaStore. " +
+                    "Berlaku untuk JPG, PNG, WebP, GIF, HEIC, dan BMP; Android 10 ke atas " +
+                    "tidak meminta izin penyimpanan.",
+                checked = state.autoSavePhotos,
+                onCheckedChange = onAutoSaveChange,
+            )
+        }
     }
 }
 
 @Composable
-private fun AutoSaveCard(
-    enabled: Boolean,
-    onChange: (Boolean) -> Unit,
+private fun BatteryCard(
+    battery: BatteryOptimizationSnapshot,
+    feedback: String?,
+    onRefresh: () -> Unit,
+    onOpenAppInfo: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
+    onOpenOemSettings: () -> Unit,
 ) {
     SurfaceCard(modifier = Modifier.fillMaxWidth()) {
-        SectionHeader(title = "Galeri perangkat")
+        SectionHeader(
+            title = "Baterai",
+            action = {
+                TextButton(onClick = onRefresh) {
+                    Text("Perbarui")
+                }
+            },
+        )
+        Spacer(Modifier.height(2.dp))
+        InfoRow(
+            icon = AppIcons.Battery,
+            title = if (battery.ignoringOptimizations) {
+                "Sudah dikecualikan"
+            } else {
+                "Masih dioptimalkan sistem"
+            },
+            value = if (battery.ignoringOptimizations) {
+                "Unggahan besar tidak akan dijeda saat layar mati."
+            } else {
+                "Android dapat menjeda unggahan saat layar mati atau baterai lemah."
+            },
+            tint = if (battery.ignoringOptimizations) {
+                Color(0xFF10B981)
+            } else {
+                Color(0xFFF59E0B)
+            },
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = batteryGuidance(battery),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        battery.appLabel?.let { label ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Cari \"$label\" (${battery.packageName.orEmpty()}) di daftar " +
+                    "aplikasi pengaturan sistem.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        battery.oemHint?.let { hint ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Perangkat ${battery.manufacturer.orEmpty()} punya pengaturan " +
+                    "autostart terpisah agar sinkronisasi tidak dihentikan setelah reboot.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = onOpenOemSettings) {
+                Text(hint)
+            }
+        }
+        if (feedback != null) {
+            Text(
+                text = feedback,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(onClick = onOpenAppInfo) {
+                Text("Info aplikasi")
+            }
+            TextButton(onClick = onOpenBatterySettings) {
+                Text("Pengaturan baterai")
+            }
+        }
+    }
+}
+
+@Composable
+private fun AboutCard(
+    logCount: Int,
+    onOpenChangelog: () -> Unit,
+    onOpenLog: () -> Unit,
+) {
+    SurfaceCard(modifier = Modifier.fillMaxWidth()) {
+        SectionHeader(title = "Tentang & bantuan")
         Spacer(Modifier.height(4.dp))
         InfoRow(
-            icon = AppIcons.Gallery,
-            title = "Simpan foto yang diunduh",
-            value = "Disalin ke Pictures/Unlimited Cloud lewat MediaStore.",
+            icon = AppIcons.Cloud,
+            title = "Unlimited Cloud",
+            value = "Versi ${AppBuildInfo.VERSION_NAME} · Compose Multiplatform",
         )
-        Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Simpan otomatis", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    text = "Berlaku untuk JPG, PNG, WebP, GIF, HEIC, dan BMP. " +
-                        "Android 10 ke atas tidak meminta izin penyimpanan.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(checked = enabled, onCheckedChange = onChange)
+        InfoRow(
+            icon = AppIcons.Shield,
+            title = "Mesin Telegram",
+            value = "TDLib · koneksi langsung, tanpa server perantara",
+            tint = MaterialTheme.colorScheme.secondary,
+        )
+        InfoRow(
+            icon = AppIcons.Lock,
+            title = "Privasi",
+            value = "Berkas tetap berada di akun Telegram Anda",
+            tint = Color(0xFF10B981),
+        )
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 4.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+        )
+        ActionRow(
+            icon = AppIcons.History,
+            title = "Apa yang baru",
+            value = "Catatan rilis versi ${AppBuildInfo.VERSION_NAME}",
+            onClick = onOpenChangelog,
+        )
+        ActionRow(
+            icon = AppIcons.Tune,
+            title = "Log diagnostik",
+            value = "$logCount baris tersimpan di perangkat ini",
+            onClick = onOpenLog,
+        )
+    }
+}
+
+@Composable
+private fun ToggleRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+        )
     }
 }
 
