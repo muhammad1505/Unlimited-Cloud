@@ -41,7 +41,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.unlimitedcloud.cloud.CloudFile
 import com.unlimitedcloud.cloud.CloudFilesViewModel
+import com.unlimitedcloud.platform.PlatformMediaPreview
 import com.unlimitedcloud.platform.decodeImageFile
+import com.unlimitedcloud.platform.isMediaPreview
 import com.unlimitedcloud.ui.components.AppIcons
 import com.unlimitedcloud.ui.components.cloudFileKind
 import com.unlimitedcloud.ui.components.mimeTypeFor
@@ -59,24 +61,32 @@ private val previewTextExtensions = setOf(
     "c", "cpp", "h", "go", "rs", "rb", "php",
 )
 
-/** Images and plain text render inside the app; other types keep the download flow. */
+/** Images, video, PDF and plain text render inside the app; other types keep the download flow. */
 fun canPreview(fileName: String): Boolean =
     mimeTypeFor(fileName).startsWith("image/") ||
+        isMediaPreview(fileName) ||
         fileName.substringAfterLast('.', "").lowercase() in previewTextExtensions
 
 /**
  * Shows a file straight from TDLib's local cache: [CloudFilesViewModel.preview]
  * fetches the bytes, and nothing is copied to Downloads or the gallery. Images
- * are decoded downsampled; text is read up to [PREVIEW_TEXT_LIMIT] bytes.
+ * are decoded downsampled, text is read up to [PREVIEW_TEXT_LIMIT] bytes, and
+ * video/PDF go to `PlatformMediaPreview`.
+ *
+ * [files] is the list the user was browsing, so the arrow buttons can move
+ * between files without closing the dialog.
  */
 @Composable
 fun FilePreviewDialog(
-    file: CloudFile,
+    files: List<CloudFile>,
+    index: Int,
+    onIndexChange: (Int) -> Unit,
     viewModel: CloudFilesViewModel,
     onDismiss: () -> Unit,
-    onDownload: () -> Unit,
-    onShare: () -> Unit,
+    onDownload: (CloudFile) -> Unit,
+    onShare: (CloudFile) -> Unit,
 ) {
+    val file = files.getOrNull(index) ?: return
     val previewable = remember(file.name) { canPreview(file.name) }
     var localPath by remember(file.messageId) { mutableStateOf<String?>(null) }
     var failure by remember(file.messageId) { mutableStateOf<String?>(null) }
@@ -118,6 +128,33 @@ fun FilePreviewDialog(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                    if (files.size > 1) {
+                        IconButton(
+                            onClick = { onIndexChange(index - 1) },
+                            enabled = index > 0,
+                        ) {
+                            Icon(
+                                imageVector = AppIcons.ChevronLeft,
+                                contentDescription = "Berkas sebelumnya",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            text = "${index + 1}/${files.size}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        IconButton(
+                            onClick = { onIndexChange(index + 1) },
+                            enabled = index < files.lastIndex,
+                        ) {
+                            Icon(
+                                imageVector = AppIcons.ChevronRight,
+                                contentDescription = "Berkas berikutnya",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                     IconButton(onClick = onDismiss) {
                         Icon(
@@ -176,7 +213,7 @@ fun FilePreviewDialog(
                 ) {
                     TextButton(
                         onClick = {
-                            onDownload()
+                            onDownload(file)
                             onDismiss()
                         },
                     ) {
@@ -191,7 +228,7 @@ fun FilePreviewDialog(
                     Spacer(Modifier.width(4.dp))
                     TextButton(
                         onClick = {
-                            onShare()
+                            onShare(file)
                             onDismiss()
                         },
                     ) {
@@ -211,53 +248,69 @@ fun FilePreviewDialog(
 
 @Composable
 private fun PreviewContent(file: CloudFile, path: String) {
-    if (mimeTypeFor(file.name).startsWith("image/")) {
-        val bitmap by produceState<ImageBitmap?>(initialValue = null, key1 = path) {
-            value = withContext(Dispatchers.Default) { decodeImageFile(path) }
-        }
-        val image = bitmap
-        if (image == null) {
-            Text(
-                text = "Gambar ini tidak bisa ditampilkan. Unduh untuk membukanya.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-        } else {
-            Image(
-                bitmap = image,
-                contentDescription = file.name,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 440.dp),
-                contentScale = ContentScale.Fit,
-            )
-        }
+    when {
+        mimeTypeFor(file.name).startsWith("image/") -> ImagePreview(file = file, path = path)
+
+        isMediaPreview(file.name) -> PlatformMediaPreview(
+            path = path,
+            fileName = file.name,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        else -> TextPreview(path = path)
+    }
+}
+
+@Composable
+private fun ImagePreview(file: CloudFile, path: String) {
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, key1 = path) {
+        value = withContext(Dispatchers.Default) { decodeImageFile(path) }
+    }
+    val image = bitmap
+    if (image == null) {
+        Text(
+            text = "Gambar ini tidak bisa ditampilkan. Unduh untuk membukanya.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
     } else {
-        val text by produceState<String?>(initialValue = null, key1 = path) {
-            value = withContext(Dispatchers.Default) { readTextPreview(path) }
-        }
-        val content = text
-        if (content == null) {
+        Image(
+            bitmap = image,
+            contentDescription = file.name,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 440.dp),
+            contentScale = ContentScale.Fit,
+        )
+    }
+}
+
+@Composable
+private fun TextPreview(path: String) {
+    val text by produceState<String?>(initialValue = null, key1 = path) {
+        value = withContext(Dispatchers.Default) { readTextPreview(path) }
+    }
+    val content = text
+    if (content == null) {
+        Text(
+            text = "Teks ini tidak bisa dibaca. Unduh untuk membukanya.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 440.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
             Text(
-                text = "Teks ini tidak bisa dibaca. Unduh untuk membukanya.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
+                text = content,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
             )
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 440.dp)
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                Text(
-                    text = content,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                )
-            }
         }
     }
 }

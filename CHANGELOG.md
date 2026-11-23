@@ -21,6 +21,18 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.2.3 — 23 November 2026
+
+### Baru
+
+- Pratinjau kini juga memutar video dengan kontrol bawaan dan menampilkan halaman PDF di Android, selain gambar dan teks; semuanya tetap dibaca dari cache TDLib tanpa menyimpan ke perangkat.
+- Dialog pratinjau punya tombol sebelumnya/berikutnya dan penghitung berkas (mis. 3/12), jadi bisa berpindah berkas tanpa menutup dan membuka ulang dialog.
+- Daftar dan grid menampilkan cover mini dari thumbnail TDLib untuk berkas yang memilikinya, sehingga gambar dan video lebih mudah dikenali dibanding ikon jenis berkas saja.
+
+### Perbaikan
+
+- Di desktop, pratinjau video dan PDF menjelaskan bahwa pemutaran belum tersedia beserta saran mengunduh, bukan pesan umum bahwa jenis berkas tidak bisa dipratinjau.
+
 ## 1.2.2 — 23 November 2026
 
 ### Baru

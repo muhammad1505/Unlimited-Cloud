@@ -67,13 +67,12 @@ import com.unlimitedcloud.ui.components.AppIcons
 import com.unlimitedcloud.ui.components.AppTextField
 import com.unlimitedcloud.ui.components.ConfirmDialog
 import com.unlimitedcloud.ui.components.EmptyState
-import com.unlimitedcloud.ui.components.FileKindIcon
+import com.unlimitedcloud.ui.components.FileCover
 import com.unlimitedcloud.ui.components.GradientButton
 import com.unlimitedcloud.ui.components.IconPillButton
 import com.unlimitedcloud.ui.components.InfoBanner
 import com.unlimitedcloud.ui.components.MetricChip
 import com.unlimitedcloud.ui.components.ShimmerBlock
-import com.unlimitedcloud.ui.components.cloudFileKind
 import com.unlimitedcloud.ui.components.mimeTypeFor
 import com.unlimitedcloud.ui.util.formatBytes
 import com.unlimitedcloud.ui.util.formatProgress
@@ -89,7 +88,8 @@ fun FilesScreen(
     var showUploadDialog by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<CloudFile?>(null) }
-    var previewTarget by remember { mutableStateOf<CloudFile?>(null) }
+    var previewFiles by remember { mutableStateOf<List<CloudFile>>(emptyList()) }
+    var previewIndex by remember { mutableStateOf(-1) }
     var uploadFolder by remember { mutableStateOf<String?>(null) }
 
     val picker = rememberLocalFilePicker { path ->
@@ -125,6 +125,14 @@ fun FilesScreen(
                 ),
             )
         }
+    }
+
+    // The dialog navigates through the list the user is looking at, so it keeps
+    // the snapshot taken when a file was opened instead of the live list.
+    val openPreview: (CloudFile) -> Unit = { file ->
+        previewFiles = state.visibleFiles
+        previewIndex = previewFiles.indexOfFirst { it.messageId == file.messageId }
+            .coerceAtLeast(0)
     }
 
     LaunchedEffect(state.status) {
@@ -309,7 +317,8 @@ fun FilesScreen(
                     onDownload = { viewModel.download(it) },
                     onDelete = { deleteTarget = it },
                     onShare = shareFile,
-                    onPreview = { previewTarget = it },
+                    onPreview = openPreview,
+                    loadCover = { file -> viewModel.cover(file) },
                 )
 
                 else -> FileList(
@@ -321,7 +330,8 @@ fun FilesScreen(
                     onDownload = { viewModel.download(it) },
                     onDelete = { deleteTarget = it },
                     onShare = shareFile,
-                    onPreview = { previewTarget = it },
+                    onPreview = openPreview,
+                    loadCover = { file -> viewModel.cover(file) },
                 )
             }
         }
@@ -376,13 +386,15 @@ fun FilesScreen(
         )
     }
 
-    previewTarget?.let { file ->
+    if (previewIndex >= 0 && previewFiles.isNotEmpty()) {
         FilePreviewDialog(
-            file = file,
+            files = previewFiles,
+            index = previewIndex.coerceIn(0, previewFiles.lastIndex),
+            onIndexChange = { previewIndex = it },
             viewModel = viewModel,
-            onDismiss = { previewTarget = null },
-            onDownload = { viewModel.download(file) },
-            onShare = { shareFile(file) },
+            onDismiss = { previewIndex = -1 },
+            onDownload = { file -> viewModel.download(file) },
+            onShare = shareFile,
         )
     }
 }
@@ -486,6 +498,7 @@ private fun FileList(
     onDelete: (CloudFile) -> Unit,
     onShare: (CloudFile) -> Unit,
     onPreview: (CloudFile) -> Unit,
+    loadCover: suspend (CloudFile) -> String?,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -501,6 +514,7 @@ private fun FileList(
                 onDelete = { onDelete(file) },
                 onShare = { onShare(file) },
                 onPreview = { onPreview(file) },
+                loadCover = loadCover,
             )
         }
 
@@ -526,6 +540,7 @@ private fun FileGrid(
     onDelete: (CloudFile) -> Unit,
     onShare: (CloudFile) -> Unit,
     onPreview: (CloudFile) -> Unit,
+    loadCover: suspend (CloudFile) -> String?,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 300.dp),
@@ -543,6 +558,7 @@ private fun FileGrid(
                 onDelete = { onDelete(file) },
                 onShare = { onShare(file) },
                 onPreview = { onPreview(file) },
+                loadCover = loadCover,
             )
         }
 
@@ -566,8 +582,8 @@ private fun FileCard(
     onDelete: () -> Unit,
     onShare: () -> Unit,
     onPreview: () -> Unit,
+    loadCover: suspend (CloudFile) -> String?,
 ) {
-    val kind = cloudFileKind(file.name)
     val meta = listOfNotNull(
         file.folder?.let { "Folder $it" },
         formatBytes(file.size),
@@ -588,7 +604,7 @@ private fun FileCard(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    FileKindIcon(kind = kind, size = 48.dp)
+                    FileCover(file = file, loadCover = loadCover, size = 48.dp)
                     Spacer(Modifier.weight(1f))
                     if (transfer != null) {
                         Text(
@@ -639,7 +655,7 @@ private fun FileCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                FileKindIcon(kind = kind)
+                FileCover(file = file, loadCover = loadCover)
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(

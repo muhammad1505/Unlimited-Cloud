@@ -3,6 +3,7 @@ package com.unlimitedcloud.cloud
 import com.unlimitedcloud.tdjson.TdJsonSession
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -25,6 +26,8 @@ data class CloudFile(
     val size: Long,
     /** Virtual folder, carried by the message caption. */
     val folder: String?,
+    /** TDLib's small preview image, only present when the sender provided one. */
+    val thumbnailId: Int? = null,
 )
 
 /** One slice of the channel history plus the cursor for the next slice. */
@@ -145,12 +148,13 @@ class CloudFileRepository(private val session: TdJsonSession) {
     suspend fun download(
         fileId: Int,
         onProgress: (Float?) -> Unit = {},
+        priority: Int = 16,
     ): String = withTimeout(DOWNLOAD_TIMEOUT_MILLIS) {
         session.call(
             buildJsonObject {
                 put("@type", "downloadFile")
                 put("file_id", fileId)
-                put("priority", 16)
+                put("priority", priority)
                 put("offset", 0)
                 put("limit", 0)
                 put("synchronous", false)
@@ -188,6 +192,15 @@ class CloudFileRepository(private val session: TdJsonSession) {
         }
         onProgress(1f)
         path
+    }
+
+    /**
+     * Returns the local path of a document's small preview image, fetching it
+     * when it is not cached yet. Preview images are a few KB, so the short
+     * timeout only guards against TDLib still generating one.
+     */
+    suspend fun localThumbnail(fileId: Int): String? = withTimeoutOrNull(THUMBNAIL_TIMEOUT_MILLIS) {
+        download(fileId, priority = 32)
     }
 
     suspend fun deleteMessages(chatId: Long, messageIds: List<Long>) {
@@ -246,6 +259,13 @@ class CloudFileRepository(private val session: TdJsonSession) {
 
         val document = content["document"]?.jsonObject ?: return null
         val file = document["document"]?.jsonObject ?: return null
+        val thumbnailId = document["thumbnail"]
+            ?.jsonObject
+            ?.get("file")
+            ?.jsonObject
+            ?.get("id")
+            ?.jsonPrimitive
+            ?.intOrNull
         val messageId = message["id"]?.jsonPrimitive?.longOrNull ?: return null
         val folder = content["caption"]
             ?.jsonObject
@@ -263,6 +283,7 @@ class CloudFileRepository(private val session: TdJsonSession) {
                 ?: "file-$messageId",
             size = file["size"]?.jsonPrimitive?.longOrNull ?: 0L,
             folder = folder,
+            thumbnailId = thumbnailId,
         )
     }
 
@@ -275,6 +296,7 @@ class CloudFileRepository(private val session: TdJsonSession) {
     private companion object {
         const val PAGE_SIZE = 50
         const val DOWNLOAD_TIMEOUT_MILLIS = 600_000L
+        const val THUMBNAIL_TIMEOUT_MILLIS = 20_000L
         const val UPLOAD_TIMEOUT_MILLIS = 900_000L
         const val POLL_INTERVAL_MILLIS = 750L
         const val PROGRESS_POLL_MILLIS = 500L

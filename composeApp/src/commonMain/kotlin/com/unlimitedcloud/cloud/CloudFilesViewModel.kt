@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 enum class FileSort(val label: String) {
     Newest("Terbaru"),
@@ -334,6 +336,10 @@ class CloudFilesViewModel(
      * share action, which needs TDLib's local copy before it can build an
      * `ACTION_SEND` intent.
      */
+    private val coverCache = mutableMapOf<Int, String>()
+    private val missingCovers = mutableSetOf<Int>()
+    private val coverMutex = Mutex()
+
     fun download(file: CloudFile, onDownloaded: (String) -> Unit = {}) {
         val alreadyRunning = state.value.transfers.any {
             it.fileId == file.fileId && it.status == TransferStatus.Running
@@ -412,6 +418,29 @@ class CloudFilesViewModel(
                     logDiagnostic(LOG_TAG, "pratinjau gagal: ${file.name}: ${failure.message}")
                     onFailed(failure.message ?: "Gagal memuat pratinjau")
                 }
+        }
+    }
+
+    /**
+     * Resolves the small cover image TDLib keeps next to a document so the list
+     * shows a thumbnail instead of a generic icon. Results (including misses)
+     * are memoised; nothing leaves TDLib's cache. A file without a thumbnail
+     * falls back to the type icon without retrying on every scroll.
+     */
+    suspend fun cover(file: CloudFile): String? {
+        val id = file.thumbnailId ?: return null
+        return coverMutex.withLock {
+            if (id in missingCovers) {
+                null
+            } else {
+                coverCache[id] ?: runCatching { repository.localThumbnail(id) }
+                    .getOrNull()
+                    ?.also { coverCache[id] = it }
+                    ?: run {
+                        missingCovers += id
+                        null
+                    }
+            }
         }
     }
 
