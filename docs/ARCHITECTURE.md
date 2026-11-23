@@ -106,7 +106,7 @@ Changelog
 | `FilePicker` | SAF `GetContent`, salin ke cache | `JFileChooser` |
 | `FileSharer` | salin ke `cache/shared`, FileProvider, chooser | clipboard file-list |
 | `GallerySyncSource` | SAF tree + `DocumentsContract`, tanpa izin media | `supported = false` |
-| `GalleryBackgroundSync` | WorkManager periodik 6 jam, batch 8, network + baterai | `supported = false` |
+| `GalleryBackgroundSync` | WorkManager periodik 6 jam, 8 foto per folder, network + baterai | `supported = false` |
 | `MediaSaver` | MediaStore `Pictures/Unlimited Cloud` (API 29+) | `supported = false` |
 | `BatteryOptimizationController` | `PowerManager`, settings sistem, pintasan OEM | tidak didukung |
 | `LogFileSaver` | SAF `CreateDocument` | `JFileChooser` |
