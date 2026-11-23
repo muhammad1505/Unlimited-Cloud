@@ -7,10 +7,15 @@ import androidx.compose.ui.graphics.ImageBitmap
 /** Video containers the preview dialog can hand to a platform media surface. */
 internal val previewVideoExtensions = setOf("mp4", "mkv", "mov", "avi", "webm", "3gp", "m4v")
 
-/** True when the file needs a video player or a PDF renderer instead of an image decoder. */
+/** Audio containers Android's MediaPlayer can decode. */
+internal val previewAudioExtensions = setOf("mp3", "wav", "flac", "ogg", "m4a", "aac", "opus")
+
+/** True when the file needs a media player or a PDF renderer instead of an image decoder. */
 fun isMediaPreview(fileName: String): Boolean {
     val extension = fileName.substringAfterLast('.', "").lowercase()
-    return extension in previewVideoExtensions || extension == "pdf"
+    return extension in previewVideoExtensions ||
+        extension in previewAudioExtensions ||
+        extension == "pdf"
 }
 
 /**
@@ -23,9 +28,10 @@ fun isMediaPreview(fileName: String): Boolean {
 expect fun decodeImageFile(path: String): ImageBitmap?
 
 /**
- * Shows a video or PDF from TDLib's cached path. Android renders video in a
- * `VideoView` and PDF pages through `PdfRenderer`; desktop has no bundled media
- * stack, so its actual explains the limitation and keeps the download buttons.
+ * Shows a video, audio or PDF from TDLib's cached path. Android renders video in
+ * a `VideoView`, audio through `MediaPlayer` and PDF pages through `PdfRenderer`;
+ * desktop has no bundled media stack, so its actual explains the limitation and
+ * keeps the download buttons available.
  */
 @Composable
 expect fun PlatformMediaPreview(path: String, fileName: String, modifier: Modifier)

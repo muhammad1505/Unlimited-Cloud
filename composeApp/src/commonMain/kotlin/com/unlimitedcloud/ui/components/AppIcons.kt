@@ -82,6 +82,14 @@ object AppIcons {
         "ChevronRight",
         "M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l-6-6z",
     )
+    val Play = icon(
+        "Play",
+        "M8 5v14l11-7z",
+    )
+    val Pause = icon(
+        "Pause",
+        "M6 19h4V5H6v14zm8-14v14h4V5h-4z",
+    )
     val Check = icon(
         "Check",
         "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z",

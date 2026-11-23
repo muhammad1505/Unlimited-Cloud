@@ -21,6 +21,18 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.2.4 — 23 November 2026
+
+### Baru
+
+- Unggahan gambar kini membawa thumbnail 320 px, jadi cover mini muncul di daftar dan grid sejak berkas pertama diunggah, bukan hanya untuk berkas yang thumbnail-nya sudah ada.
+- Berkas audio (mp3, m4a, aac, wav, flac, ogg, opus) bisa diputar di dialog pratinjau Android lengkap dengan bilah progres, tombol putar/jeda, dan durasi berjalan.
+- Di desktop, tombol panah kiri/kanan berpindah berkas di dialog pratinjau dan Escape menutup dialog, tanpa perlu klik tombol.
+
+### Perbaikan
+
+- Thumbnail hanya dibuat untuk berkas gambar yang bisa didekode, sehingga unggahan video, arsip, atau dokumen tetap berjalan seperti sebelumnya tanpa biaya tambahan.
+
 ## 1.2.3 — 23 November 2026
 
 ### Baru

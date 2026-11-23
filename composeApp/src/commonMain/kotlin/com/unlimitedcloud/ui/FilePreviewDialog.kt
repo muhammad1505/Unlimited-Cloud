@@ -1,6 +1,7 @@
 package com.unlimitedcloud.ui
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,7 +32,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
@@ -87,7 +95,10 @@ fun FilePreviewDialog(
     onShare: (CloudFile) -> Unit,
 ) {
     val file = files.getOrNull(index) ?: return
+    val focusRequester = remember { FocusRequester() }
     val previewable = remember(file.name) { canPreview(file.name) }
+
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     var localPath by remember(file.messageId) { mutableStateOf<String?>(null) }
     var failure by remember(file.messageId) { mutableStateOf<String?>(null) }
 
@@ -109,7 +120,30 @@ fun FilePreviewDialog(
                 .padding(16.dp)
                 .fillMaxWidth()
                 .widthIn(max = 900.dp)
-                .heightIn(max = 640.dp),
+                .heightIn(max = 640.dp)
+                .focusRequester(focusRequester)
+                .focusable()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionLeft -> {
+                            if (index > 0) onIndexChange(index - 1)
+                            index > 0
+                        }
+
+                        Key.DirectionRight -> {
+                            if (index < files.lastIndex) onIndexChange(index + 1)
+                            index < files.lastIndex
+                        }
+
+                        Key.Escape -> {
+                            onDismiss()
+                            true
+                        }
+
+                        else -> false
+                    }
+                },
             shape = RoundedCornerShape(24.dp),
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 24.dp,

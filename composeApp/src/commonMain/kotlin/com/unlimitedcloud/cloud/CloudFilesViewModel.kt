@@ -8,6 +8,7 @@ import com.unlimitedcloud.platform.GalleryFolder
 import com.unlimitedcloud.platform.GallerySyncSource
 import com.unlimitedcloud.platform.LocalFolderSelection
 import com.unlimitedcloud.platform.MediaSaver
+import com.unlimitedcloud.platform.createUploadThumbnail
 import com.unlimitedcloud.settings.AppPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -692,7 +693,10 @@ class CloudFilesViewModel(
         localPath: String,
         folder: String?,
     ): Result<Unit> = runCatching {
-        repository.upload(chatId, localPath, folder) { progress ->
+        // Images carry a small generated preview so the channel message (and the
+        // file card) has a cover from the first upload onwards.
+        val thumbnail = createUploadThumbnail(localPath)
+        repository.upload(chatId, localPath, folder, thumbnail) { progress ->
             updateTransfer(transferId) { it.copy(progress = progress) }
         }
     }.onSuccess {

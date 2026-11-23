@@ -1,5 +1,6 @@
 package com.unlimitedcloud.cloud
 
+import com.unlimitedcloud.platform.UploadThumbnail
 import com.unlimitedcloud.tdjson.TdJsonSession
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
@@ -83,6 +84,7 @@ class CloudFileRepository(private val session: TdJsonSession) {
         chatId: Long,
         localPath: String,
         folder: String?,
+        thumbnail: UploadThumbnail? = null,
         onProgress: (Float?) -> Unit = {},
     ) {
         val response = session.call(
@@ -107,7 +109,27 @@ class CloudFileRepository(private val session: TdJsonSession) {
                                         put("path", localPath)
                                     },
                                 )
-                                put("thumbnail", JsonNull)
+                                // Without a thumbnail the message has no cover, which
+                                // left image cards showing a generic icon.
+                                put(
+                                    "thumbnail",
+                                    if (thumbnail == null) {
+                                        JsonNull
+                                    } else {
+                                        buildJsonObject {
+                                            put("@type", "inputThumbnail")
+                                            put(
+                                                "thumbnail",
+                                                buildJsonObject {
+                                                    put("@type", "inputFileLocal")
+                                                    put("path", thumbnail.path)
+                                                },
+                                            )
+                                            put("width", thumbnail.width)
+                                            put("height", thumbnail.height)
+                                        }
+                                    },
+                                )
                                 put("disable_content_type_detection", true)
                             },
                         )
