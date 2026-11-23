@@ -63,7 +63,7 @@ push / PR ke main
   ├─ android       : kompilasi desktop, fetch TDLib arm64, APK release bertanda
   │                  tangan, verifikasi apksigner + daftar izin APK, artefak APK
   ├─ desktop-linux : packageDeb + packageRpm di Ubuntu
-  └─ desktop-windows: packageMsi di Windows (dengan native libtdjson.dll)
+  └─ desktop-windows: packageMsi di Windows
 
 tag vX.Y.Z
   └─ release       : tag harus sama dengan gradle.properties, ambil APK + deb +

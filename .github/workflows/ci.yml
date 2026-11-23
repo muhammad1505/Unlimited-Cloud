@@ -146,8 +146,9 @@ jobs:
             "$APKSIGNER" verify --print-certs "$apk"
           done
 
-      # DUMP used to slip in through a dependency's uses-permission-sdk-23 entry
-      # and only Play Protect noticed; this reads the packaged manifest instead.
+      # The merger kept a lone tools:node="remove" marker as a real declaration,
+      # so DUMP reached the APK while the source manifest looked clean. This reads
+      # the packaged manifest, which is what Play sees.
       - name: Check APK permissions
         run: |
           if ! python3 scripts/check-apk-permissions.py androidApp/build/outputs/apk/release/*.apk; then
@@ -243,7 +244,7 @@ jobs:
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
-        run: ./gradlew.bat :composeApp:packageMsi "-Punlimitedcloud.windowsNatives=true" --stacktrace
+        run: ./gradlew.bat :composeApp:packageMsi --stacktrace
 
       - name: Upload msi
         uses: actions/upload-artifact@v7

@@ -1,20 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Only these two are needed. Files are reached through the Storage Access
+         Framework, so no storage permission is declared. A `tools:node="remove"`
+         marker for android.permission.DUMP used to sit here; the manifest merger
+         keeps a lone removal marker as a real declaration, which put DUMP into the
+         APK. Nothing declares it anymore, so no marker is needed and
+         scripts/check-apk-permissions.py fails the build if one comes back. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
-    <!-- A transitive AndroidX manifest pulls in DUMP, a signature|privileged
-         permission the app can never be granted and Play flags as unnecessary.
-         Files are reached through the Storage Access Framework, so the app still
-         declares no storage permission of any kind. -->
-    <uses-permission
-        android:name="android.permission.DUMP"
-        tools:node="remove" />
-    <uses-permission-sdk-23
-        android:name="android.permission.DUMP"
-        tools:node="remove" />
 
     <application
         android:allowBackup="false"

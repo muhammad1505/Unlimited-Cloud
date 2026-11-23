@@ -106,44 +106,9 @@ android {
     }
 }
 
-// The dependency that contributes android.permission.DUMP ignores both
-// tools:node="remove" forms, and AGP 9 no longer allows MERGED_MANIFEST to be
-// transformed, so the merged manifest is rewritten as soon as the merger has
-// finished. Packaging reads that file afterwards, which keeps the APK free of
-// the privileged permission Play Protect warns about.
-val forbiddenPermissions = listOf("android.permission.DUMP")
-
-tasks.configureEach {
-    if (!name.startsWith("process") || !name.endsWith("Manifest")) return@configureEach
-    doLast {
-        val manifests = outputs.files.files.flatMap { output ->
-            if (output.isDirectory) {
-                output.walkTopDown().filter { it.isFile && it.name == "AndroidManifest.xml" }.toList()
-            } else {
-                listOfNotNull(output.takeIf { it.isFile && it.name == "AndroidManifest.xml" })
-            }
-        }
-        manifests.forEach { manifest ->
-            var text = manifest.readText()
-            var changed = false
-            forbiddenPermissions.forEach { permission ->
-                val element = Regex(
-                    "<uses-permission(?:-sdk-\\d+)?\\b[^>]*android:name=\"" +
-                        Regex.escape(permission) + "\"[^>]*/>",
-                )
-                val stripped = element.replace(text, "")
-                if (stripped != text) {
-                    text = stripped
-                    changed = true
-                }
-            }
-            if (changed) {
-                manifest.writeText(text)
-                logger.lifecycle("removed $forbiddenPermissions from ${manifest.path}")
-            }
-        }
-    }
-}
+// Permissions are checked against the built APK by
+// scripts/check-apk-permissions.py in CI, so a dependency that starts declaring
+// android.permission.DUMP fails the release build instead of reaching Play.
 
 dependencies {
     implementation(project(":composeApp"))

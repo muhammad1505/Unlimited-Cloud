@@ -212,15 +212,11 @@ kotlin {
             implementation(libs.kotlinx.coroutines.swing)
             implementation(libs.sqldelight.sqlite.driver)
 
-            // TDLib's JSON C API is reached through JNA; the natives artifact ships
-            // libtdjson.so for this host.
+            // TDLib's JSON C API is reached through JNA from java.library.path or a
+            // libtdjson resource on the classpath. tdlight only publishes the JNI
+            // wrapper (tdjni) for desktop, never tdjson, so the deb/rpm/msi are
+            // packaged without natives and the user supplies libtdjson/.dll.
             implementation(libs.jna)
-            implementation(libs.tdlight.natives.linux)
-            // The Windows job passes -Punlimitedcloud.windowsNatives=true so its MSI
-            // carries libtdjson.dll; every other build skips that download.
-            if (providers.gradleProperty("unlimitedcloud.windowsNatives").orNull == "true") {
-                implementation(libs.tdlight.natives.windows)
-            }
         }
     }
 }

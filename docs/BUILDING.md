@@ -55,8 +55,13 @@ memverifikasi SHA-256, lalu menyalin `libtdjson.so` ke
 
 # Paket desktop: deb + rpm di Linux, msi di Windows
 ./gradlew :composeApp:packageDeb :composeApp:packageRpm
-./gradlew.bat :composeApp:packageMsi -Punlimitedcloud.windowsNatives=true
+./gradlew.bat :composeApp:packageMsi
 ```
+
+Paket desktop tidak membundel native TDLib. `it.tdlight` hanya menerbitkan
+wrapper JNI (`tdjni`), bukan `tdjson`, sehingga `libtdjson.so`/`tdjson.dll`
+dipasang terpisah dan ditunjuk lewat `-Djna.library.path` (atau diletakkan di
+`PATH`).
 
 ## Signing Android
 
