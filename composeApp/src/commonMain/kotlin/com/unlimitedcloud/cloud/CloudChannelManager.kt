@@ -38,7 +38,9 @@ sealed interface CloudChannelState {
  * with topics and every app folder becomes one topic. Builds before 1.3.0 used
  * a plain broadcast channel, which cannot host topics; such a channel is
  * adopted as a migration source: its documents are copied into topics of a new
- * forum group, and the old chat is renamed so it is never picked up again.
+ * forum group, and the old chat is renamed so it is never picked up again. It is
+ * deleted instead when the user opted into that, since deleting a chat cannot be
+ * undone and the copy has to look complete first.
  *
  * The chat id is persisted as soon as it is known and validated with `getChat`
  * on every launch. Discovery only falls back to searching when that id is gone
@@ -53,6 +55,9 @@ class CloudChannelManager(
         const val ROOT_STORAGE_TITLE = "UNLIMITED_CLOUD_ROOT_V1"
 
         private const val LEGACY_TITLE_SUFFIX = " (lama)"
+
+        /** Title the pre-forum channel gets once its files were copied. */
+        const val LEGACY_STORAGE_TITLE = ROOT_STORAGE_TITLE + LEGACY_TITLE_SUFFIX
 
         private const val ROOT_STORAGE_DESCRIPTION =
             "Unlimited Cloud storage root (v1). Every topic is a folder; renaming or " +
@@ -385,24 +390,90 @@ class CloudChannelManager(
         }
 
         preferences.setCloudRootChatId(target)
-        preferences.setMigrationSourceChatId(null)
+        // The source id stays until the old chat is really gone: it is what
+        // [deleteLeftoverLegacyChat] needs when the switch is turned on after
+        // the migration already finished.
         preferences.setMigrationTargetChatId(null)
         preferences.setMigrationCursor(0L)
 
-        // The renamed chat keeps its files, but it can no longer be mistaken for
-        // the storage chat, and the user can delete it once the group looks right.
+        // Renaming keeps the old chat from being mistaken for the storage chat
+        // whether it stays behind or an opted-in deletion fails.
         runCatching {
             session.call(
                 buildJsonObject {
                     put("@type", "setChatTitle")
                     put("chat_id", legacyChatId)
-                    put("title", ROOT_STORAGE_TITLE + LEGACY_TITLE_SUFFIX)
+                    put("title", LEGACY_STORAGE_TITLE)
                 },
             )
         }
 
         logDiagnostic(LOG_TAG, "migrasi selesai: $forwarded berkas dipindahkan ke $target")
+        if (preferences.deleteLegacyChatAfterMigration()) deleteLeftoverLegacyChat()
         return ready(target)
+    }
+
+    /**
+     * Deletes the pre-forum channel whose files [migrate] copied into a topic.
+     *
+     * Only the app's own chat is touched: the id comes from the stored migration
+     * source, so a chat that merely carries the same title is never deleted.
+     * Returns true when there is nothing left to delete, which also covers a
+     * chat that was already removed by hand.
+     */
+    suspend fun deleteLeftoverLegacyChat(): Boolean {
+        val legacyChatId = preferences.migrationSourceChatId() ?: return true
+
+        val deleted = runCatching { deleteChat(legacyChatId) }.getOrElse { failure ->
+            logDiagnostic(LOG_TAG, "hapus channel lama gagal: ${failure.message}")
+            return false
+        }
+        if (!deleted) return false
+
+        preferences.setMigrationSourceChatId(null)
+        logDiagnostic(LOG_TAG, "channel lama dihapus: $legacyChatId")
+        return true
+    }
+
+    /**
+     * `deleteChat` needs owner rights, so a refusal falls back to revoking the
+     * history: the chat may stay in the chat list, but none of its files remain.
+     */
+    private suspend fun deleteChat(chatId: Long): Boolean {
+        val response = session.call(
+            buildJsonObject {
+                put("@type", "deleteChat")
+                put("chat_id", chatId)
+            },
+        )
+        if (!response.isError()) return true
+
+        val message = response["message"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        if (message.contains("not found", ignoreCase = true)) return true
+
+        logDiagnostic(LOG_TAG, "hapus channel lama ditolak TDLib: $message")
+        val fallback = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "deleteChatHistory")
+                    put("chat_id", chatId)
+                    put("remove_from_chat_list", true)
+                    put("revoke", true)
+                },
+            )
+        }.getOrElse { failure ->
+            logDiagnostic(LOG_TAG, "hapus riwayat channel lama gagal: ${failure.message}")
+            return false
+        }
+        if (fallback.isError()) {
+            logDiagnostic(
+                LOG_TAG,
+                "hapus riwayat channel lama ditolak TDLib: " +
+                    fallback["message"]?.jsonPrimitive?.contentOrNull,
+            )
+            return false
+        }
+        return true
     }
 
     /** Creates the forum group that receives the legacy channel's files. */

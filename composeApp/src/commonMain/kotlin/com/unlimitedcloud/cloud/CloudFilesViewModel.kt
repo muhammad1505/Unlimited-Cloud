@@ -77,6 +77,8 @@ data class ExplorerUiState(
     val gallerySyncedCount: Int = 0,
     val autoSaveSupported: Boolean = false,
     val autoSavePhotos: Boolean = false,
+    /** Deletes the pre-forum channel once its files are copied into a topic. */
+    val deleteLegacyChat: Boolean = false,
     /** Bumped when a cover becomes available so cards retry their thumbnail. */
     val coverRevision: Int = 0,
 ) {
@@ -132,6 +134,7 @@ class CloudFilesViewModel(
             gallerySyncedCount = preferences.gallerySyncedKeys().size,
             autoSaveSupported = mediaSaver.supported,
             autoSavePhotos = preferences.autoSavePhotos(),
+            deleteLegacyChat = preferences.deleteLegacyChatAfterMigration(),
         ),
     )
     val uiState: StateFlow<ExplorerUiState> = state.asStateFlow()
@@ -730,6 +733,27 @@ class CloudFilesViewModel(
     fun setAutoSavePhotos(enabled: Boolean) {
         preferences.setAutoSavePhotos(enabled)
         state.update { it.copy(autoSavePhotos = enabled) }
+    }
+
+    /**
+     * Turns the leftover channel cleanup on or off. Switching it on also clears
+     * a chat a finished migration left behind, but never while files are still
+     * being copied out of it.
+     */
+    fun setDeleteLegacyChatAfterMigration(enabled: Boolean) {
+        preferences.setDeleteLegacyChatAfterMigration(enabled)
+        state.update { it.copy(deleteLegacyChat = enabled) }
+        if (!enabled) return
+
+        scope.launch {
+            if (channelManager.channelState.value is CloudChannelState.Migrating) {
+                reportStatus("Channel lama akan dihapus setelah migrasi selesai")
+                return@launch
+            }
+            if (!channelManager.deleteLeftoverLegacyChat()) {
+                reportError("Channel lama belum bisa dihapus; coba lagi nanti")
+            }
+        }
     }
 
     /** Adds one folder to the sync set; picking the same tree twice is a no-op. */

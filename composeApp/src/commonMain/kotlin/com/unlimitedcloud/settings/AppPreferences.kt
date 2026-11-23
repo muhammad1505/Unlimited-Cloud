@@ -46,6 +46,16 @@ class AppPreferences(
     fun setCloudRootChatId(chatId: Long?) =
         put(KEY_CLOUD_ROOT_CHAT_ID, chatId?.toString())
 
+    /**
+     * Whether the pre-forum channel is deleted once its files have been copied
+     * into the forum group. Off by default: deleting a chat cannot be undone, so
+     * the user decides, and until then the old chat is only renamed.
+     */
+    fun deleteLegacyChatAfterMigration(): Boolean = get(KEY_DELETE_LEGACY_CHAT) == "true"
+
+    fun setDeleteLegacyChatAfterMigration(enabled: Boolean) =
+        put(KEY_DELETE_LEGACY_CHAT, enabled.toString())
+
     // --- Channel to forum-group migration -------------------------------------
 
     /**
@@ -256,6 +266,7 @@ class AppPreferences(
     private companion object {
         const val KEY_THEME = "theme"
         const val KEY_CLOUD_ROOT_CHAT_ID = "cloud.rootChatId"
+        const val KEY_DELETE_LEGACY_CHAT = "cloud.deleteLegacyChat"
         const val KEY_MIGRATION_SOURCE = "cloud.migrationSource"
         const val KEY_MIGRATION_TARGET = "cloud.migrationTarget"
         const val KEY_MIGRATION_CURSOR = "cloud.migrationCursor"

@@ -26,10 +26,11 @@ Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 ### Baru
 
 - Folder kini benar-benar terlihat di Telegram: penyimpanan pindah ke grup privat dengan topik forum dan setiap folder menjadi satu topik. Unggahan ke folder baru membuat topiknya otomatis, sedangkan berkas tanpa folder masuk ke topik General.
+- Pengaturan Penyimpanan punya sakelar "Hapus channel lama otomatis". Bila dinyalakan, channel versi sebelumnya dihapus beserta isinya setelah semua berkasnya selesai disalin ke grup topik; bila mati, channel itu hanya diganti nama dan bisa Anda hapus sendiri di Telegram.
 
 ### Perbaikan
 
-- Berkas dari channel lama dipindahkan otomatis ke grup topik saat aplikasi dibuka setelah pembaruan. Kemajuan migrasi disimpan per halaman sehingga proses yang terhenti tidak menggandakan berkas, dan chat lama diganti nama menjadi "UNLIMITED_CLOUD_ROOT_V1 (lama)" agar tidak tertukar dengan penyimpanan baru; chat lama itu bisa dihapus manual dari Telegram setelah daftar berkas tampil lengkap.
+- Berkas dari channel lama dipindahkan otomatis ke grup topik saat aplikasi dibuka setelah pembaruan. Kemajuan migrasi disimpan per halaman sehingga proses yang terhenti tidak menggandakan berkas, dan chat lama diganti nama menjadi "UNLIMITED_CLOUD_ROOT_V1 (lama)" agar tidak tertukar dengan penyimpanan baru.
 
 ## 1.2.9 — 23 November 2026
 
