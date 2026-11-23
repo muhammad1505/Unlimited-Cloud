@@ -37,7 +37,7 @@ private enum class RootDestination {
 /**
  * Root composable shared by the Android and Desktop entry points.
  *
- * Phase 2–8 built the TDLib engine, storage channel and explorer. This tree now
+ * Phase 2–8 built the TDLib engine, storage group and explorer. This tree now
  * adds the branding/UI phase: a short branded splash, the redesigned auth flow,
  * and the signed-in shell with Berkas, Transfer and Pengaturan sections.
  */

@@ -34,12 +34,12 @@ class AppPreferences(
 
     fun saveThemeMode(mode: ThemeMode) = put(KEY_THEME, mode.name)
 
-    // --- Storage channel -------------------------------------------------------
+    // --- Storage group ---------------------------------------------------------
 
     /**
-     * Chat id of the channel that holds the files. Remembering it is what keeps
-     * the app from creating a fresh channel every launch: the title search can
-     * miss a channel that TDLib has not indexed on this device yet.
+     * Chat id of the group that holds the files. Remembering it is what keeps
+     * the app from creating a fresh group every launch: the title search can
+     * miss a group that TDLib has not indexed on this device yet.
      */
     fun cloudRootChatId(): Long? = get(KEY_CLOUD_ROOT_CHAT_ID)?.toLongOrNull()
 

@@ -68,7 +68,7 @@ private enum class AppSection(
     val subtitle: String,
     val icon: ImageVector,
 ) {
-    Files("Berkas", "Berkas Anda", "Kelola penyimpanan di channel pribadi", AppIcons.Folder),
+    Files("Berkas", "Berkas Anda", "Kelola penyimpanan di grup topik", AppIcons.Folder),
     Transfers("Transfer", "Transfer", "Unggahan dan unduhan terbaru", AppIcons.Transfer),
     Settings("Pengaturan", "Pengaturan", "Akun, tampilan, dan penyimpanan", AppIcons.Tune),
 }
@@ -239,7 +239,7 @@ fun SignedInScreen(
     if (showLogout) {
         ConfirmDialog(
             title = "Keluar dari akun?",
-            message = "Sesi Telegram akan ditutup. Berkas yang sudah diunggah tetap aman di channel pribadi Anda.",
+            message = "Sesi Telegram akan ditutup. Berkas yang sudah diunggah tetap aman di grup topik pribadi Anda.",
             confirmLabel = "Keluar",
             onConfirm = {
                 showLogout = false

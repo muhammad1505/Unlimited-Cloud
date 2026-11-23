@@ -669,7 +669,7 @@ class CloudFilesViewModel(
         }
     }
 
-    /** Drops one entry from the Transfer tab without touching the channel. */
+    /** Drops one entry from the Transfer tab without touching the group. */
     fun removeTransfer(id: String) {
         state.update { current ->
             current.copy(transfers = current.transfers.filterNot { it.id == id })
@@ -689,7 +689,7 @@ class CloudFilesViewModel(
 
     /**
      * Clears everything that belongs to the signed-in account. Called after a
-     * logout, because the stored channel id and the gallery sync history would
+     * logout, because the stored group id and the gallery sync history would
      * otherwise point at the previous account on the next sign-in.
      */
     fun forgotAccount() {
@@ -768,7 +768,7 @@ class CloudFilesViewModel(
 
     /**
      * Uploads every new image from the chosen folders into the "Galeri" folder of
-     * the storage channel, reading them in batches of [GALLERY_BATCH_SIZE] so a
+     * the storage group, reading them in batches of [GALLERY_BATCH_SIZE] so a
      * large folder does not have to be copied to the cache at once. Runs once per
      * app session when auto sync is enabled, and on demand from Settings.
      *
@@ -937,7 +937,7 @@ class CloudFilesViewModel(
         localPath: String,
         folder: String?,
     ): Result<Unit> = runCatching {
-        // Images carry a small generated preview so the channel message (and the
+        // Images carry a small generated preview so the group message (and the
         // file card) has a cover from the first upload onwards.
         val thumbnail = withContext(Dispatchers.Default) { createUploadThumbnail(localPath) }
         repository.upload(chatId, localPath, folder, thumbnail) { progress ->
@@ -982,7 +982,7 @@ class CloudFilesViewModel(
     }
 
     /**
-     * Loads a few pages per request so reaching the end of a large channel does
+     * Loads a few pages per request so reaching the end of a large group does
      * not need one round trip per 50 files when the user asks for more.
      */
     private suspend fun loadMorePages(chatId: Long, fromMessageId: Long): LoadedFiles =
@@ -1008,7 +1008,7 @@ class CloudFilesViewModel(
         throw lastFailure ?: IllegalStateException("Gagal memuat daftar berkas")
     }
 
-    /** Resolves the channel, waiting out a TDLib session that is still starting. */
+    /** Resolves the group, waiting out a TDLib session that is still starting. */
     private suspend fun ensureChannelWithRetry(): Long? {
         repeat(CHANNEL_ATTEMPTS) { attempt ->
             channelManager.ensureRootChannel()?.let { return it }

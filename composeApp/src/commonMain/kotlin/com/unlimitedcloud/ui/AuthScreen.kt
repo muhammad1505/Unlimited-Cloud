@@ -938,7 +938,7 @@ private fun HeroPanel(modifier: Modifier = Modifier) {
             )
             Spacer(Modifier.height(16.dp))
             Text(
-                text = "Simpan berkas apa pun ke channel pribadi Telegram Anda. " +
+                text = "Simpan berkas apa pun ke grup topik pribadi di Telegram. " +
                     "Tanpa langganan, tanpa batas kuota, dan tetap bisa diakses dari Android maupun Desktop.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color.White.copy(alpha = 0.70f),

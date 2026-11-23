@@ -352,7 +352,7 @@ fun FilesScreen(
                         EmptyState(
                             icon = AppIcons.Cloud,
                             title = "Belum ada berkas",
-                            message = "Unggah berkas pertama Anda. Semua file disimpan di channel pribadi Telegram.",
+                            message = "Unggah berkas pertama Anda. Semua file disimpan di grup topik pribadi Telegram, dan setiap folder menjadi satu topik.",
                             actionLabel = "Unggah berkas",
                             onAction = { showUploadDialog = true },
                         )
@@ -449,7 +449,7 @@ fun FilesScreen(
         val count = selectedFiles.size
         ConfirmDialog(
             title = "Hapus $count berkas?",
-            message = "$count berkas terpilih akan dihapus dari channel Telegram. " +
+            message = "$count berkas terpilih akan dihapus dari grup Telegram. " +
                 "Tindakan ini tidak bisa dibatalkan.",
             confirmLabel = "Hapus",
             onConfirm = {
@@ -465,7 +465,7 @@ fun FilesScreen(
     deleteTarget?.let { file ->
         ConfirmDialog(
             title = "Hapus berkas?",
-            message = "\"${file.name}\" akan dihapus dari channel Telegram. Tindakan ini tidak bisa dibatalkan.",
+            message = "\"${file.name}\" akan dihapus dari grup Telegram. Tindakan ini tidak bisa dibatalkan.",
             confirmLabel = "Hapus",
             onConfirm = {
                 viewModel.delete(file)

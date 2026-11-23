@@ -361,8 +361,8 @@ private fun GalleryCard(
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Foto dari folder yang Anda pilih diunggah ke folder Galeri di " +
-                "channel Telegram. Pemilih folder sistem dipakai, jadi tidak perlu " +
+            text = "Foto dari folder yang Anda pilih diunggah ke topik Galeri di grup " +
+                "penyimpanan Telegram. Pemilih folder sistem dipakai, jadi tidak perlu " +
                 "izin penyimpanan.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -19,7 +19,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
-/** One uploaded file, as stored in the root channel's message history. */
+/** One uploaded file, as stored in the root group's message history. */
 data class CloudFile(
     val messageId: Long,
     val fileId: Int,
@@ -31,7 +31,7 @@ data class CloudFile(
     val thumbnailId: Int? = null,
 )
 
-/** One slice of the channel history plus the cursor for the next slice. */
+/** One slice of the group history plus the cursor for the next slice. */
 data class CloudPage(
     val files: List<CloudFile>,
     val nextFromMessageId: Long?,
@@ -96,7 +96,7 @@ class CloudFileRepository(private val session: TdJsonSession) {
                 },
             )
         }
-        // Channels and supergroups cannot be closed; an error here is harmless.
+        // Supergroups cannot be closed; an error here is harmless.
         runCatching {
             session.call(
                 buildJsonObject {
