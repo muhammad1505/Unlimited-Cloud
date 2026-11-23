@@ -21,6 +21,14 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.2.8 — 23 November 2026
+
+### Perbaikan
+
+- Daftar berkas tampil secepat halaman pertama dimuat: sisa riwayat menyusul di latar belakang sambil Anda menggulir, bukan menunggu semua halaman selesai. Membuka berkas juga tetap terasa instan.
+- Menu Berkas tidak lagi hanya menampilkan satu berkas saat aplikasi baru dibuka. Riwayat dibaca setelah chat disiapkan, dan halaman pendek tidak lagi dianggap akhir riwayat, jadi tidak perlu menekan muat ulang untuk melihat semuanya.
+- Setiap kartu hanya mencari status transfernya sekali, sehingga menggulir daftar panjang tidak memindai seluruh riwayat transfer per kartu.
+
 ## 1.2.7 — 23 November 2026
 
 ### Perbaikan

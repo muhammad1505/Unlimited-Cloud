@@ -66,13 +66,40 @@ class CloudFileRepository(private val session: TdJsonSession) {
         val files = messages.mapNotNull { toFile(it.jsonObject) }
         val lastMessageId = messages.lastOrNull()?.jsonObject?.get("id")?.jsonPrimitive?.longOrNull
 
-        val next = if (messages.size >= limit && lastMessageId != null && lastMessageId != 0L) {
-            lastMessageId
-        } else {
-            null
-        }
+        // A short page does not mean the history ended: TDLib also returns
+        // short pages while it fetches from the server and when the slice holds
+        // service messages instead of files. Paging continues until a request
+        // comes back empty, so the last page can no longer be dropped silently.
+        val next = if (lastMessageId != null && lastMessageId != 0L) lastMessageId else null
 
         return CloudPage(files = files, nextFromMessageId = next)
+    }
+
+    /**
+     * Marks the chat as opened so TDLib downloads its remote history.
+     *
+     * Paging a chat that was never opened only returned the messages already
+     * cached on the device, which is why the explorer could start with a single
+     * file until the list was refreshed by hand.
+     */
+    suspend fun prepareHistory(chatId: Long) {
+        runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "openChat")
+                    put("chat_id", chatId)
+                },
+            )
+        }
+        // Channels and supergroups cannot be closed; an error here is harmless.
+        runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "closeChat")
+                    put("chat_id", chatId)
+                },
+            )
+        }
     }
 
     /**

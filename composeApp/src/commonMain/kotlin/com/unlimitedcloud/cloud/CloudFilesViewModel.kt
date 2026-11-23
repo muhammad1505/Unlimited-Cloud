@@ -12,6 +12,7 @@ import com.unlimitedcloud.platform.createUploadThumbnail
 import com.unlimitedcloud.settings.AppPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -143,10 +144,14 @@ class CloudFilesViewModel(
     }
 
     private var transferCounter = 0L
+    private var refreshJob: Job? = null
 
     fun refresh() {
-        scope.launch {
-            state.update { it.copy(loading = true, error = null) }
+        // Two refreshes paging at once would append duplicate pages, so the new
+        // one replaces the one still running.
+        refreshJob?.cancel()
+        refreshJob = scope.launch {
+            state.update { it.copy(loading = true, loadingMore = false, error = null) }
 
             val chatId = ensureChannelWithRetry()
             if (chatId == null) {
@@ -154,30 +159,69 @@ class CloudFilesViewModel(
                 return@launch
             }
 
-            // Every page is loaded here: leaving the list at the first page made
-            // Settings report the channel's real count while the explorer stopped
-            // at 50 files. MAX_AUTO_PAGES still bounds a very large channel.
-            runCatching { loadAllPages(chatId) }
-                .onSuccess { loaded ->
-                    state.update { previous ->
-                        val folders = loaded.files.mapNotNull { it.folder }.distinct().sorted()
-                        previous.copy(
-                            files = loaded.files,
-                            folders = folders,
-                            selectedFolder = previous.selectedFolder?.takeIf { it in folders },
-                            loading = false,
-                            loadingMore = false,
-                            canLoadMore = loaded.nextFromMessageId != null,
-                            nextFromMessageId = loaded.nextFromMessageId,
-                            error = null,
-                        )
-                    }
+            // The history of a chat TDLib has not opened yet only comes from the
+            // local cache, so the first refresh could show a single file until
+            // the list was reloaded by hand.
+            runCatching { repository.prepareHistory(chatId) }
+
+            // The first page paints the list right away; the remaining pages are
+            // appended while the user is already scrolling, instead of blocking
+            // on a long chain of requests before showing anything.
+            val firstPage = runCatching { loadPage(chatId, 0L) }.getOrElse { failure ->
+                state.update {
+                    it.copy(
+                        loading = false,
+                        loadingMore = false,
+                        error = failure.message ?: "Gagal memuat daftar berkas",
+                    )
                 }
-                .onFailure { failure ->
-                    state.update {
-                        it.copy(loading = false, error = failure.message ?: "Gagal memuat daftar berkas")
-                    }
-                }
+                return@launch
+            }
+
+            var cursor = firstPage.nextFromMessageId
+            applyPage(firstPage, replace = true, moreToLoad = cursor != null)
+
+            var pages = 1
+            while (cursor != null && pages < MAX_AUTO_PAGES) {
+                val page = runCatching { loadPage(chatId, cursor) }.getOrElse { break }
+                pages++
+                cursor = page.nextFromMessageId
+                applyPage(page, replace = false, moreToLoad = cursor != null)
+            }
+
+            state.update {
+                it.copy(
+                    loading = false,
+                    loadingMore = false,
+                    canLoadMore = cursor != null,
+                    nextFromMessageId = cursor,
+                )
+            }
+        }
+    }
+
+    /** Merges one history page into the list and keeps folders in sync. */
+    private fun applyPage(page: CloudPage, replace: Boolean, moreToLoad: Boolean) {
+        state.update { previous ->
+            val merged = if (replace) {
+                page.files
+            } else {
+                val known = previous.files.mapTo(mutableSetOf()) { it.messageId }
+                previous.files + page.files.filterNot { known.contains(it.messageId) }
+            }
+            val folders = merged.mapNotNull { it.folder }.distinct().sorted()
+            previous.copy(
+                files = merged,
+                folders = folders,
+                selectedFolder = previous.selectedFolder?.takeIf { it in folders },
+                loading = false,
+                loadingMore = moreToLoad,
+                // The refresh keeps paging on its own; the scroll trigger only
+                // takes over once it has finished.
+                canLoadMore = false,
+                nextFromMessageId = page.nextFromMessageId,
+                error = null,
+            )
         }
     }
 
@@ -957,33 +1001,6 @@ class CloudFilesViewModel(
             page.files.forEach { file ->
                 if (seen.add(file.messageId)) files += file
             }
-
-            val pageNext = page.nextFromMessageId
-            if (pageNext == null || pageNext == cursor) {
-                nextCursor = null
-                break
-            }
-            nextCursor = pageNext
-            cursor = pageNext
-        }
-
-        return LoadedFiles(files = files, nextFromMessageId = nextCursor)
-    }
-
-    /** Loads pages until the history ends, deduplicating the page boundary. */
-    private suspend fun loadAllPages(chatId: Long): LoadedFiles {
-        val files = mutableListOf<CloudFile>()
-        val seen = mutableSetOf<Long>()
-        var cursor = 0L
-        var nextCursor: Long? = null
-        var pages = 0
-
-        while (pages < MAX_AUTO_PAGES) {
-            val page = loadPage(chatId, cursor)
-            page.files.forEach { file ->
-                if (seen.add(file.messageId)) files += file
-            }
-            pages++
 
             val pageNext = page.nextFromMessageId
             if (pageNext == null || pageNext == cursor) {

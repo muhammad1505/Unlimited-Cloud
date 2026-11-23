@@ -101,6 +101,14 @@ fun FilesScreen(
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var showDeleteSelected by remember { mutableStateOf(false) }
 
+    // Cards only need the transfer that is running for them; looking it up once
+    // here keeps every card from scanning the whole list on each recomposition.
+    val runningTransfers: Map<Int?, TransferItem> = remember(state.transfers) {
+        state.transfers
+            .filter { it.status == TransferStatus.Running }
+            .associateBy { it.fileId }
+    }
+
     val selectedFiles = state.visibleFiles.filter { it.messageId in selectedIds }
     val exitSelection: () -> Unit = {
         selecting = false
@@ -365,7 +373,7 @@ fun FilesScreen(
 
                 expanded -> FileGrid(
                     files = state.visibleFiles,
-                    transfers = state.transfers,
+                    transfers = runningTransfers,
                     loadingMore = state.loadingMore,
                     canLoadMore = state.canLoadMore,
                     onLoadMore = viewModel::loadMore,
@@ -383,7 +391,7 @@ fun FilesScreen(
 
                 else -> FileList(
                     files = state.visibleFiles,
-                    transfers = state.transfers,
+                    transfers = runningTransfers,
                     loadingMore = state.loadingMore,
                     canLoadMore = state.canLoadMore,
                     onLoadMore = viewModel::loadMore,
@@ -572,7 +580,7 @@ private fun FolderChip(
 @Composable
 private fun FileList(
     files: List<CloudFile>,
-    transfers: List<TransferItem>,
+    transfers: Map<Int?, TransferItem>,
     loadingMore: Boolean,
     canLoadMore: Boolean,
     onLoadMore: () -> Unit,
@@ -595,7 +603,7 @@ private fun FileList(
         items(files, key = { it.messageId }) { file ->
             FileCard(
                 file = file,
-                transfer = transfers.firstOrNull { it.fileId == file.fileId && it.status == TransferStatus.Running },
+                transfer = transfers[file.fileId],
                 expanded = false,
                 selecting = selecting,
                 selected = file.messageId in selectedIds,
@@ -630,7 +638,7 @@ private fun FileList(
 @Composable
 private fun FileGrid(
     files: List<CloudFile>,
-    transfers: List<TransferItem>,
+    transfers: Map<Int?, TransferItem>,
     loadingMore: Boolean,
     canLoadMore: Boolean,
     onLoadMore: () -> Unit,
@@ -655,7 +663,7 @@ private fun FileGrid(
         gridItems(files, key = { it.messageId }) { file ->
             FileCard(
                 file = file,
-                transfer = transfers.firstOrNull { it.fileId == file.fileId && it.status == TransferStatus.Running },
+                transfer = transfers[file.fileId],
                 expanded = true,
                 selecting = selecting,
                 selected = file.messageId in selectedIds,
