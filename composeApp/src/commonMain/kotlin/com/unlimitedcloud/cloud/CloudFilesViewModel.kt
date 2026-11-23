@@ -512,9 +512,14 @@ class CloudFilesViewModel(
         }
     }.getOrNull()
 
-    fun delete(file: CloudFile) {
+    fun delete(file: CloudFile) = deleteMany(listOf(file))
+
+    /** Deletes several messages with one request, so a multi-select stays fast. */
+    fun deleteMany(files: List<CloudFile>) {
+        if (files.isEmpty()) return
+        logDiagnostic(LOG_TAG, "hapus ${files.size} berkas")
         scope.launch {
-            state.update { it.copy(status = "Menghapus ${file.name}…", error = null) }
+            state.update { it.copy(status = "Menghapus ${files.size} berkas…", error = null) }
 
             val chatId = channelManager.ensureRootChannel()
             if (chatId == null) {
@@ -522,24 +527,98 @@ class CloudFilesViewModel(
                 return@launch
             }
 
-            runCatching { repository.deleteMessages(chatId, listOf(file.messageId)) }
+            runCatching { repository.deleteMessages(chatId, files.map { it.messageId }) }
                 .onSuccess {
-                    logDiagnostic(LOG_TAG, "hapus selesai: ${file.name}")
+                    val removed = files.mapTo(mutableSetOf()) { it.messageId }
+                    logDiagnostic(LOG_TAG, "hapus selesai: ${files.size} berkas")
                     state.update { current ->
-                        val remaining = current.files.filterNot { it.messageId == file.messageId }
+                        val remaining = current.files.filterNot { it.messageId in removed }
                         current.copy(
                             files = remaining,
                             folders = remaining.mapNotNull { it.folder }.distinct().sorted(),
                             selectedFolder = current.selectedFolder?.takeIf { folder ->
                                 remaining.any { it.folder == folder }
                             },
-                            status = "${file.name} dihapus",
+                            status = if (files.size == 1) {
+                                "${files.first().name} dihapus"
+                            } else {
+                                "${files.size} berkas dihapus"
+                            },
                         )
                     }
                 }
                 .onFailure { failure ->
                     state.update { it.copy(error = failure.message ?: "Gagal menghapus berkas") }
                 }
+        }
+    }
+
+    /**
+     * Downloads a selection one file at a time. Keeping it sequential avoids
+     * flooding the connection with parallel requests on a big selection while
+     * still giving every file its own row in the Transfer tab.
+     */
+    fun downloadMany(files: List<CloudFile>) {
+        if (files.isEmpty()) return
+        logDiagnostic(LOG_TAG, "unduh massal: ${files.size} berkas")
+
+        scope.launch {
+            var saved = 0
+            var failed = 0
+
+            files.forEach { file ->
+                val id = "transfer-${++transferCounter}"
+                addTransfer(
+                    TransferItem(
+                        id = id,
+                        fileName = file.name,
+                        direction = TransferDirection.Download,
+                        progress = 0f,
+                        fileId = file.fileId,
+                        file = file,
+                    ),
+                )
+
+                runCatching {
+                    repository.download(file.fileId) { progress ->
+                        updateTransfer(id) { it.copy(progress = progress) }
+                    }
+                }.fold(
+                    onSuccess = { path ->
+                        updateTransfer(id) {
+                            it.copy(
+                                status = TransferStatus.Completed,
+                                progress = 1f,
+                                detail = path,
+                            )
+                        }
+                        saveDownloadedFile(file, path)
+                        saved++
+                    },
+                    onFailure = { failure ->
+                        updateTransfer(id) {
+                            it.copy(
+                                status = TransferStatus.Failed,
+                                detail = failure.message ?: "Unduhan gagal",
+                            )
+                        }
+                        failed++
+                    },
+                )
+            }
+
+            state.update {
+                it.copy(
+                    status = if (saved > 0) "$saved berkas diunduh" else null,
+                    error = if (failed > 0) "$failed berkas gagal diunduh" else null,
+                )
+            }
+        }
+    }
+
+    private fun addTransfer(item: TransferItem) {
+        state.update { current ->
+            current.copy(transfers = (listOf(item) + current.transfers).take(MAX_TRANSFERS))
         }
     }
 

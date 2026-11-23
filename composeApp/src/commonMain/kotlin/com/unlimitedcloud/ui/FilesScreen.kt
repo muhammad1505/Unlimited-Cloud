@@ -1,8 +1,10 @@
 package com.unlimitedcloud.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,6 +60,7 @@ import com.unlimitedcloud.cloud.ExplorerUiState
 import com.unlimitedcloud.cloud.FileSort
 import com.unlimitedcloud.cloud.TransferItem
 import com.unlimitedcloud.cloud.TransferStatus
+import com.unlimitedcloud.platform.PlatformBackHandler
 import com.unlimitedcloud.platform.ShareRequest
 import com.unlimitedcloud.platform.ShareResult
 import com.unlimitedcloud.platform.rememberFileSharer
@@ -91,6 +94,29 @@ fun FilesScreen(
     var previewFiles by remember { mutableStateOf<List<CloudFile>>(emptyList()) }
     var previewIndex by remember { mutableStateOf(-1) }
     var uploadFolder by remember { mutableStateOf<String?>(null) }
+
+    // Multi-select lives in the screen: the selection is a UI concern and must
+    // not survive a refresh that replaces the file list.
+    var selecting by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var showDeleteSelected by remember { mutableStateOf(false) }
+
+    val selectedFiles = state.visibleFiles.filter { it.messageId in selectedIds }
+    val exitSelection: () -> Unit = {
+        selecting = false
+        selectedIds = emptySet()
+    }
+    val toggleSelection: (CloudFile) -> Unit = { file ->
+        selectedIds = if (file.messageId in selectedIds) {
+            selectedIds - file.messageId
+        } else {
+            selectedIds + file.messageId
+        }
+    }
+    val startSelection: (CloudFile) -> Unit = { file ->
+        selecting = true
+        selectedIds = selectedIds + file.messageId
+    }
 
     val picker = rememberLocalFilePicker { path ->
         if (path != null) {
@@ -141,6 +167,9 @@ fun FilesScreen(
             viewModel.dismissStatus()
         }
     }
+
+    // Back leaves selection mode instead of closing the signed-in shell.
+    PlatformBackHandler(enabled = selecting) { exitSelection() }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(
@@ -267,6 +296,32 @@ fun FilesScreen(
                 )
             }
 
+            if (selecting) {
+                Spacer(Modifier.height(8.dp))
+                SelectionBar(
+                    count = selectedFiles.size,
+                    allSelected = state.visibleFiles.isNotEmpty() &&
+                        selectedFiles.size == state.visibleFiles.size,
+                    onToggleAll = {
+                        selectedIds = if (selectedFiles.size == state.visibleFiles.size) {
+                            emptySet()
+                        } else {
+                            state.visibleFiles.mapTo(mutableSetOf()) { it.messageId }
+                        }
+                    },
+                    onDownload = {
+                        if (selectedFiles.isNotEmpty()) {
+                            viewModel.downloadMany(selectedFiles)
+                        }
+                        exitSelection()
+                    },
+                    onDelete = {
+                        if (selectedFiles.isNotEmpty()) showDeleteSelected = true
+                    },
+                    onCancel = exitSelection,
+                )
+            }
+
             if (state.loading && state.files.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
                 LinearProgressIndicator(
@@ -318,6 +373,10 @@ fun FilesScreen(
                     onDelete = { deleteTarget = it },
                     onShare = shareFile,
                     onPreview = openPreview,
+                    selecting = selecting,
+                    selectedIds = selectedIds,
+                    onToggle = toggleSelection,
+                    onSelectMode = startSelection,
                     loadCover = { file -> viewModel.cover(file) },
                     coverRevision = state.coverRevision,
                 )
@@ -332,6 +391,10 @@ fun FilesScreen(
                     onDelete = { deleteTarget = it },
                     onShare = shareFile,
                     onPreview = openPreview,
+                    selecting = selecting,
+                    selectedIds = selectedIds,
+                    onToggle = toggleSelection,
+                    onSelectMode = startSelection,
                     loadCover = { file -> viewModel.cover(file) },
                     coverRevision = state.coverRevision,
                 )
@@ -371,6 +434,23 @@ fun FilesScreen(
                 showUploadDialog = false
                 folderPicker()
             },
+        )
+    }
+
+    if (showDeleteSelected) {
+        val count = selectedFiles.size
+        ConfirmDialog(
+            title = "Hapus $count berkas?",
+            message = "$count berkas terpilih akan dihapus dari channel Telegram. " +
+                "Tindakan ini tidak bisa dibatalkan.",
+            confirmLabel = "Hapus",
+            onConfirm = {
+                viewModel.deleteMany(selectedFiles)
+                showDeleteSelected = false
+                exitSelection()
+            },
+            onDismiss = { showDeleteSelected = false },
+            destructive = true,
         )
     }
 
@@ -500,6 +580,10 @@ private fun FileList(
     onDelete: (CloudFile) -> Unit,
     onShare: (CloudFile) -> Unit,
     onPreview: (CloudFile) -> Unit,
+    selecting: Boolean,
+    selectedIds: Set<Long>,
+    onToggle: (CloudFile) -> Unit,
+    onSelectMode: (CloudFile) -> Unit,
     loadCover: suspend (CloudFile) -> String?,
     coverRevision: Int,
 ) {
@@ -513,10 +597,14 @@ private fun FileList(
                 file = file,
                 transfer = transfers.firstOrNull { it.fileId == file.fileId && it.status == TransferStatus.Running },
                 expanded = false,
+                selecting = selecting,
+                selected = file.messageId in selectedIds,
+                onOpen = { if (selecting) onToggle(file) else onPreview(file) },
+                onLongPress = { if (selecting) onToggle(file) else onSelectMode(file) },
+                onSelectMode = { onSelectMode(file) },
                 onDownload = { onDownload(file) },
                 onDelete = { onDelete(file) },
                 onShare = { onShare(file) },
-                onPreview = { onPreview(file) },
                 loadCover = loadCover,
                 coverRevision = coverRevision,
             )
@@ -550,6 +638,10 @@ private fun FileGrid(
     onDelete: (CloudFile) -> Unit,
     onShare: (CloudFile) -> Unit,
     onPreview: (CloudFile) -> Unit,
+    selecting: Boolean,
+    selectedIds: Set<Long>,
+    onToggle: (CloudFile) -> Unit,
+    onSelectMode: (CloudFile) -> Unit,
     loadCover: suspend (CloudFile) -> String?,
     coverRevision: Int,
 ) {
@@ -565,10 +657,14 @@ private fun FileGrid(
                 file = file,
                 transfer = transfers.firstOrNull { it.fileId == file.fileId && it.status == TransferStatus.Running },
                 expanded = true,
+                selecting = selecting,
+                selected = file.messageId in selectedIds,
+                onOpen = { if (selecting) onToggle(file) else onPreview(file) },
+                onLongPress = { if (selecting) onToggle(file) else onSelectMode(file) },
+                onSelectMode = { onSelectMode(file) },
                 onDownload = { onDownload(file) },
                 onDelete = { onDelete(file) },
                 onShare = { onShare(file) },
-                onPreview = { onPreview(file) },
                 loadCover = loadCover,
                 coverRevision = coverRevision,
             )
@@ -588,15 +684,20 @@ private fun FileGrid(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileCard(
     file: CloudFile,
     transfer: TransferItem?,
     expanded: Boolean,
+    selecting: Boolean,
+    selected: Boolean,
+    onOpen: () -> Unit,
+    onLongPress: () -> Unit,
+    onSelectMode: () -> Unit,
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
-    onPreview: () -> Unit,
     loadCover: suspend (CloudFile) -> String?,
     coverRevision: Int,
 ) {
@@ -610,12 +711,19 @@ private fun FileCard(
         // menu made opening a file two taps plus a menu read.
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onPreview),
+            .combinedClickable(
+                onClick = onOpen,
+                onLongClick = onLongPress,
+            ),
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+            width = if (selected) 2.dp else 1.dp,
+            color = if (selected) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+            },
         ),
     ) {
         if (expanded) {
@@ -631,19 +739,16 @@ private fun FileCard(
                         revision = coverRevision,
                     )
                     Spacer(Modifier.weight(1f))
-                    if (transfer != null) {
-                        Text(
-                            text = formatProgress(transfer.progress),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    } else {
-                        FileActionsMenu(
-                            onDownload = onDownload,
-                            onDelete = onDelete,
-                            onShare = onShare,
-                        )
-                    }
+                    CardTrailing(
+                        transfer = transfer,
+                        selecting = selecting,
+                        selected = selected,
+                        compact = false,
+                        onDownload = onDownload,
+                        onDelete = onDelete,
+                        onShare = onShare,
+                        onSelectMode = onSelectMode,
+                    )
                 }
                 Spacer(Modifier.height(12.dp))
                 Text(
@@ -709,21 +814,60 @@ private fun FileCard(
                     }
                 }
 
-                if (transfer != null) {
-                    Text(
-                        text = formatProgress(transfer.progress),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                } else {
-                    FileActionsMenu(
-                        onDownload = onDownload,
-                        onDelete = onDelete,
-                        onShare = onShare,
-                    )
-                }
+                CardTrailing(
+                    transfer = transfer,
+                    selecting = selecting,
+                    selected = selected,
+                    compact = true,
+                    onDownload = onDownload,
+                    onDelete = onDelete,
+                    onShare = onShare,
+                    onSelectMode = onSelectMode,
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun CardTrailing(
+    transfer: TransferItem?,
+    selecting: Boolean,
+    selected: Boolean,
+    compact: Boolean,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+    onShare: () -> Unit,
+    onSelectMode: () -> Unit,
+) {
+    when {
+        selecting -> Icon(
+            imageVector = if (selected) AppIcons.Check else AppIcons.Eye,
+            contentDescription = if (selected) "Terpilih" else "Belum dipilih",
+            tint = if (selected) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.size(22.dp),
+        )
+
+        transfer != null -> Text(
+            text = formatProgress(transfer.progress),
+            style = if (compact) {
+                MaterialTheme.typography.labelSmall
+            } else {
+                MaterialTheme.typography.labelMedium
+            },
+            color = MaterialTheme.colorScheme.primary,
+        )
+
+        else -> FileActionsMenu(
+            onDownload = onDownload,
+            onDelete = onDelete,
+            onShare = onShare,
+            onSelectMode = onSelectMode,
+        )
     }
 }
 
@@ -732,6 +876,7 @@ private fun FileActionsMenu(
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
+    onSelectMode: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -746,6 +891,20 @@ private fun FileActionsMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
+            DropdownMenuItem(
+                text = { Text("Pilih beberapa") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = AppIcons.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    onSelectMode()
+                },
+            )
             DropdownMenuItem(
                 text = { Text("Bagikan") },
                 leadingIcon = {
@@ -788,6 +947,54 @@ private fun FileActionsMenu(
                     onDelete()
                 },
             )
+        }
+    }
+}
+
+@Composable
+private fun SelectionBar(
+    count: Int,
+    allSelected: Boolean,
+    onToggleAll: () -> Unit,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+        border = BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (count == 0) "Pilih berkas" else "$count dipilih",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onToggleAll) {
+                Text(if (allSelected) "Batal pilih" else "Pilih semua")
+            }
+            TextButton(onClick = onDownload, enabled = count > 0) {
+                Text("Unduh")
+            }
+            TextButton(onClick = onDelete, enabled = count > 0) {
+                Text("Hapus", color = MaterialTheme.colorScheme.error)
+            }
+            IconButton(onClick = onCancel) {
+                Icon(
+                    imageVector = AppIcons.Close,
+                    contentDescription = "Keluar dari pilih beberapa",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

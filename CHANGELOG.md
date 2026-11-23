@@ -32,6 +32,7 @@ Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 - Dialog pratinjau menampilkan tombol "Coba lagi" saat pengambilan berkas gagal, tanpa perlu menutup dialog.
 - Logout membersihkan state akun: channel penyimpanan, riwayat sinkron galeri, dan daftar berkas tidak lagi terbawa ke akun berikutnya.
 - Cover kartu tidak lagi menunggu satu per satu; thumbnail yang lambat tidak memblokir berkas lain.
+- Menu Berkas kini punya mode pilih-banyak: tahan satu kartu (atau pilih "Pilih beberapa" di menu ⋮) untuk memilih beberapa berkas, lalu unduh atau hapus sekaligus dengan bilah aksi di atas daftar.
 - Pemutar audio desktop berhenti di akhir lagu dan tombol kembali ke "Putar".
 - Sesi TDLib membersihkan permintaan yang gagal dikirim, sehingga tidak ada respons yang tertinggal.
 
