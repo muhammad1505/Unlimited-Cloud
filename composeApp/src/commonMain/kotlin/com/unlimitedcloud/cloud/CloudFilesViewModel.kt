@@ -51,6 +51,8 @@ data class TransferItem(
     val progress: Float? = null,
     val fileId: Int? = null,
     val detail: String? = null,
+    /** Kept for downloads so a failed transfer can be retried from the list. */
+    val file: CloudFile? = null,
 )
 
 /** Everything the explorer renders, including the selected folder and search. */
@@ -193,7 +195,7 @@ class CloudFilesViewModel(
                 return@launch
             }
 
-            runCatching { loadPage(chatId, fromMessageId = cursor) }
+            runCatching { loadMorePages(chatId, cursor) }
                 .onSuccess { page ->
                     state.update { previous ->
                         val known = previous.files.mapTo(mutableSetOf()) { it.messageId }
@@ -254,14 +256,14 @@ class CloudFilesViewModel(
 
         state.update {
             it.copy(
-                transfers = listOf(
+                transfers = (listOf(
                     TransferItem(
                         id = id,
                         fileName = fileName,
                         direction = TransferDirection.Upload,
                         progress = 0f,
                     ),
-                ) + it.transfers,
+                ) + it.transfers).take(MAX_TRANSFERS),
                 status = "Mengunggah $fileName…",
                 error = null,
             )
@@ -322,14 +324,14 @@ class CloudFilesViewModel(
                 val fileName = path.substringAfterLast('/').substringAfterLast('\\')
                 state.update { current ->
                     current.copy(
-                        transfers = listOf(
+                        transfers = (listOf(
                             TransferItem(
                                 id = transferId,
                                 fileName = fileName.ifBlank { "berkas" },
                                 direction = TransferDirection.Upload,
                                 progress = 0f,
                             ),
-                        ) + current.transfers,
+                        ) + current.transfers).take(MAX_TRANSFERS),
                     )
                 }
 
@@ -380,15 +382,16 @@ class CloudFilesViewModel(
         val id = "transfer-${++transferCounter}"
         state.update {
             it.copy(
-                transfers = listOf(
+                transfers = (listOf(
                     TransferItem(
                         id = id,
                         fileName = file.name,
                         direction = TransferDirection.Download,
                         progress = 0f,
                         fileId = file.fileId,
+                        file = file,
                     ),
-                ) + it.transfers,
+                ) + it.transfers).take(MAX_TRANSFERS),
                 status = "Mengunduh ${file.name}…",
                 error = null,
             )
@@ -409,14 +412,11 @@ class CloudFilesViewModel(
                             detail = path,
                         )
                     }
-                    val savedToGallery = saveToDeviceGallery(file, path)
+                    val savedTo = saveDownloadedFile(file, path)
                     state.update {
                         it.copy(
-                            status = if (savedToGallery) {
-                                "Tersimpan di galeri: ${file.name}"
-                            } else {
-                                "Tersimpan: ${path.substringAfterLast('/').substringAfterLast('\\')}"
-                            },
+                            status = savedTo?.let { location -> "Tersimpan di $location" }
+                                ?: "Tersimpan di cache aplikasi: ${file.name}",
                         )
                     }
                     onDownloaded(path)
@@ -460,18 +460,23 @@ class CloudFilesViewModel(
      * already downloaded, so nothing extra is fetched. Misses are memoised so a
      * list without covers does not retry on every scroll.
      */
-    suspend fun cover(file: CloudFile): String? = coverMutex.withLock {
-        coverPaths[file.messageId]?.let { return@withLock it }
-        if (file.messageId in missingCoverFiles) return@withLock null
+    suspend fun cover(file: CloudFile): String? {
+        // The network probe stays outside the mutex: holding it while TDLib
+        // generated or fetched a thumbnail serialised every other card behind
+        // one slow file (up to the 20 s thumbnail timeout each).
+        coverMutex.withLock { coverPaths[file.messageId] }?.let { return it }
+        if (coverMutex.withLock { file.messageId in missingCoverFiles }) return null
 
         val path = resolveThumbnail(file) ?: resolveCachedImage(file)
-        if (path == null) {
-            missingCoverFiles += file.messageId
-            null
-        } else {
-            coverPaths[file.messageId] = path
-            path
+        coverMutex.withLock {
+            if (path == null) {
+                missingCoverFiles += file.messageId
+            } else {
+                coverPaths[file.messageId] = path
+                missingCoverFiles -= file.messageId
+            }
         }
+        return path
     }
 
     /** Generates and caches a cover from a file the user just previewed or downloaded. */
@@ -542,6 +547,48 @@ class CloudFilesViewModel(
         state.update { current ->
             current.copy(transfers = current.transfers.filter { it.status == TransferStatus.Running })
         }
+    }
+
+    /** Drops one entry from the Transfer tab without touching the channel. */
+    fun removeTransfer(id: String) {
+        state.update { current ->
+            current.copy(transfers = current.transfers.filterNot { it.id == id })
+        }
+    }
+
+    /** Restarts a failed download; the old entry is replaced by the new attempt. */
+    fun retryTransfer(item: TransferItem) {
+        val file = item.file
+        if (file == null) {
+            reportError("Transfer ini tidak bisa diulang dari sini")
+            return
+        }
+        removeTransfer(item.id)
+        download(file)
+    }
+
+    /**
+     * Clears everything that belongs to the signed-in account. Called after a
+     * logout, because the stored channel id and the gallery sync history would
+     * otherwise point at the previous account on the next sign-in.
+     */
+    fun forgotAccount() {
+        channelManager.forget()
+        preferences.clearAccountData()
+        thumbnailCache.clear()
+        missingThumbnails.clear()
+        coverPaths.clear()
+        missingCoverFiles.clear()
+        state.value = ExplorerUiState(
+            gallerySupported = gallerySource.supported,
+            galleryAutoSync = preferences.galleryAutoSync(),
+            galleryBackgroundSupported = backgroundSync.supported,
+            galleryBackgroundSync = preferences.galleryBackgroundSync(),
+            galleryFolders = preferences.galleryFolders(),
+            galleryLastSync = preferences.galleryLastSync(),
+            autoSaveSupported = mediaSaver.supported,
+            autoSavePhotos = preferences.autoSavePhotos(),
+        )
     }
 
     // --- Gallery auto sync -----------------------------------------------------
@@ -668,14 +715,14 @@ class CloudFilesViewModel(
                         val transferId = "transfer-${++transferCounter}"
                         state.update { current ->
                             current.copy(
-                                transfers = listOf(
+                                transfers = (listOf(
                                     TransferItem(
                                         id = transferId,
                                         fileName = photo.name,
                                         direction = TransferDirection.Upload,
                                         progress = 0f,
                                     ),
-                                ) + current.transfers,
+                                ) + current.transfers).take(MAX_TRANSFERS),
                             )
                         }
 
@@ -722,12 +769,21 @@ class CloudFilesViewModel(
 
     // --- Internals -------------------------------------------------------------
 
-    /** Copies the download into Pictures/Unlimited Cloud when the user opted in. */
-    private suspend fun saveToDeviceGallery(file: CloudFile, localPath: String): Boolean {
-        if (!mediaSaver.supported || !preferences.autoSavePhotos()) return false
-        val mimeType = imageMimeType(file.name) ?: return false
-        return runCatching { mediaSaver.saveImage(localPath, file.name, mimeType) }
-            .getOrDefault(false)
+    /**
+     * Copies a finished download somewhere the user can open it. Images go to
+     * the photo library when auto-save is on; everything else (and images with
+     * the toggle off) goes to the downloads folder. Returns the shown location.
+     */
+    private suspend fun saveDownloadedFile(file: CloudFile, localPath: String): String? {
+        val mimeType = imageMimeType(file.name)
+        if (mimeType != null && mediaSaver.supported && preferences.autoSavePhotos()) {
+            val saved = runCatching { mediaSaver.saveImage(localPath, file.name, mimeType) }
+                .getOrDefault(false)
+            if (saved) return "galeri (Pictures/Unlimited Cloud)"
+        }
+        return runCatching {
+            mediaSaver.saveFile(localPath, file.name, mimeType ?: "application/octet-stream")
+        }.getOrNull()
     }
 
     private fun imageMimeType(name: String): String? =
@@ -799,6 +855,36 @@ class CloudFilesViewModel(
         state.update { it.copy(status = null, error = message) }
     }
 
+    /**
+     * Loads a few pages per request so reaching the end of a large channel does
+     * not need one round trip per 50 files when the user asks for more.
+     */
+    private suspend fun loadMorePages(chatId: Long, fromMessageId: Long): LoadedFiles {
+        val files = mutableListOf<CloudFile>()
+        val seen = mutableSetOf<Long>()
+        var cursor = fromMessageId
+        var nextCursor: Long? = null
+        var pages = 0
+
+        while (pages < MAX_MORE_PAGES) {
+            val page = loadPage(chatId, cursor)
+            pages++
+            page.files.forEach { file ->
+                if (seen.add(file.messageId)) files += file
+            }
+
+            val pageNext = page.nextFromMessageId
+            if (pageNext == null || pageNext == cursor) {
+                nextCursor = null
+                break
+            }
+            nextCursor = pageNext
+            cursor = pageNext
+        }
+
+        return LoadedFiles(files = files, nextFromMessageId = nextCursor)
+    }
+
     /** Loads pages until the history ends, deduplicating the page boundary. */
     private suspend fun loadAllPages(chatId: Long): LoadedFiles {
         val files = mutableListOf<CloudFile>()
@@ -860,6 +946,8 @@ class CloudFilesViewModel(
         const val PAGE_ATTEMPTS = 3
         const val PAGE_RETRY_MILLIS = 1_000L
         const val MAX_AUTO_PAGES = 20
+        const val MAX_MORE_PAGES = 4
+        const val MAX_TRANSFERS = 200
         const val GALLERY_FOLDER = "Galeri"
     }
 }

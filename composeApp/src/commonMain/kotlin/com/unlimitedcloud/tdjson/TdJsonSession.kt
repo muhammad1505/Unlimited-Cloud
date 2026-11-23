@@ -100,9 +100,11 @@ class TdJsonSession(
             request.forEach { (key, value) -> put(key, value) }
             put("@extra", JsonPrimitive(extra))
         }
-        client.send(payload.toString())
-        if (logTraffic) logDiagnostic(LOG_TAG, "-> ${request["@type"]?.jsonPrimitive?.contentOrNull}")
         return try {
+            // Inside the try: a native send failure used to leave the deferred
+            // registered forever, so the entry leaked and the id was never freed.
+            client.send(payload.toString())
+            if (logTraffic) logDiagnostic(LOG_TAG, "-> ${request["@type"]?.jsonPrimitive?.contentOrNull}")
             val response = withTimeout(timeoutMillis) { deferred.await() }
             if (logTraffic && response["@type"]?.jsonPrimitive?.contentOrNull == "error") {
                 logDiagnostic(LOG_TAG, "<- error: ${response["message"]?.jsonPrimitive?.contentOrNull}")

@@ -245,6 +245,9 @@ fun SignedInScreen(
             confirmLabel = "Keluar",
             onConfirm = {
                 showLogout = false
+                // Forget the previous account's channel and sync bookkeeping
+                // before the session ends, otherwise the next sign-in inherits them.
+                viewModel.forgotAccount()
                 engine.logout()
             },
             onDismiss = { showLogout = false },

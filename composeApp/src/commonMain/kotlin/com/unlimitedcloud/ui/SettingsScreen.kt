@@ -418,6 +418,7 @@ fun SettingsScreen(
             confirmLabel = "Keluar",
             onConfirm = {
                 showLogout = false
+                viewModel.forgotAccount()
                 engine.logout()
             },
             onDismiss = { showLogout = false },

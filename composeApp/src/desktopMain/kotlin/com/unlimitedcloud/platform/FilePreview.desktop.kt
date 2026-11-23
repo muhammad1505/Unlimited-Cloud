@@ -102,7 +102,14 @@ private fun DesktopAudioPreview(path: String, fileName: String, modifier: Modifi
     // A Clip does not report progress, so the position is polled while playing.
     LaunchedEffect(playing, clip) {
         while (playing) {
-            positionMs = (clip.microsecondPosition / 1000L).toInt()
+            val position = clip.microsecondPosition
+            positionMs = (position / 1000L).toInt()
+            // A Clip stops on its own at the end but keeps reporting "running",
+            // so the button used to stay on "Jeda" for a finished track.
+            if (clip.microsecondLength > 0 && position >= clip.microsecondLength) {
+                clip.stop()
+                playing = false
+            }
             delay(400)
         }
     }

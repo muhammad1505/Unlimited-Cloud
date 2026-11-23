@@ -26,7 +26,14 @@ Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 ### Perbaikan
 
 - Pratinjau kini satu ketukan: klik kartu berkas langsung membuka pratinjau. Item "Pratinjau" dihapus dari menu ⋮, yang sekarang hanya berisi Bagikan, Unduh, dan Hapus.
-- Daftar berkas memuat halaman berikutnya sendiri saat Anda menggulir sampai bawah, jadi tidak perlu menekan "Muat lebih banyak" untuk channel besar.
+- Daftar berkas memuat halaman berikutnya sendiri saat Anda menggulir sampai bawah, jadi tidak perlu menekan "Muat lebih banyak" untuk channel besar. Satu permintaan kini mengambil beberapa halaman sekaligus.
+- Unduh benar-benar menyimpan berkas: gambar masuk ke galeri (atau Pictures/Unlimited Cloud), berkas lain ke folder Download/Unlimited Cloud di Android dan ~/Downloads/Unlimited Cloud di desktop. Sebelumnya berkas non-gambar hanya tertinggal di cache aplikasi.
+- Tab Transfer sekarang punya aksi: "Coba lagi" untuk unduhan yang gagal dan "Hapus" untuk entri yang sudah selesai. Riwayat transfer dibatasi 200 entri agar tidak terus membengkak.
+- Dialog pratinjau menampilkan tombol "Coba lagi" saat pengambilan berkas gagal, tanpa perlu menutup dialog.
+- Logout membersihkan state akun: channel penyimpanan, riwayat sinkron galeri, dan daftar berkas tidak lagi terbawa ke akun berikutnya.
+- Cover kartu tidak lagi menunggu satu per satu; thumbnail yang lambat tidak memblokir berkas lain.
+- Pemutar audio desktop berhenti di akhir lagu dan tombol kembali ke "Putar".
+- Sesi TDLib membersihkan permintaan yang gagal dikirim, sehingga tidak ada respons yang tertinggal.
 
 ## 1.2.5 — 23 November 2026
 

@@ -96,7 +96,11 @@ fun TransfersScreen(
                 contentPadding = PaddingValues(bottom = 24.dp),
             ) {
                 items(state.transfers, key = { it.id }) { transfer ->
-                    TransferCard(transfer = transfer)
+                    TransferCard(
+                        transfer = transfer,
+                        onRetry = { viewModel.retryTransfer(transfer) },
+                        onRemove = { viewModel.removeTransfer(transfer.id) },
+                    )
                 }
             }
         }
@@ -104,7 +108,11 @@ fun TransfersScreen(
 }
 
 @Composable
-private fun TransferCard(transfer: TransferItem) {
+private fun TransferCard(
+    transfer: TransferItem,
+    onRetry: () -> Unit,
+    onRemove: () -> Unit,
+) {
     val accent = when (transfer.direction) {
         TransferDirection.Upload -> MaterialTheme.colorScheme.primary
         TransferDirection.Download -> MaterialTheme.colorScheme.secondary
@@ -211,6 +219,7 @@ private fun TransferCard(transfer: TransferItem) {
                 }
             }
 
+            Column(horizontalAlignment = Alignment.End) {
             when (transfer.status) {
                 TransferStatus.Running -> CircularProgressIndicator(
                     modifier = Modifier.size(22.dp),
@@ -247,6 +256,18 @@ private fun TransferCard(transfer: TransferItem) {
                         modifier = Modifier.size(17.dp),
                     )
                 }
+            }
+
+            if (transfer.status == TransferStatus.Failed && transfer.file != null) {
+                TextButton(onClick = onRetry) {
+                    Text("Coba lagi", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            if (transfer.status != TransferStatus.Running) {
+                TextButton(onClick = onRemove) {
+                    Text("Hapus", style = MaterialTheme.typography.labelSmall)
+                }
+            }
             }
         }
     }

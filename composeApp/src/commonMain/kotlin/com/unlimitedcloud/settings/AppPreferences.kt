@@ -46,6 +46,16 @@ class AppPreferences(
     fun setCloudRootChatId(chatId: Long?) =
         put(KEY_CLOUD_ROOT_CHAT_ID, chatId?.toString())
 
+    /**
+     * Drops the keys that belong to the Telegram account. The picked gallery
+     * folders are kept: those are device grants, not account data.
+     */
+    fun clearAccountData() {
+        put(KEY_CLOUD_ROOT_CHAT_ID, null)
+        put(KEY_GALLERY_SYNCED_KEYS, null)
+        put(KEY_GALLERY_LAST_SYNC, null)
+    }
+
     // --- Changelog gating ------------------------------------------------------
 
     /**

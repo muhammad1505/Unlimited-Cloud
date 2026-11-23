@@ -103,8 +103,10 @@ fun FilePreviewDialog(
     var localPath by remember(file.messageId) { mutableStateOf<String?>(null) }
     var failure by remember(file.messageId) { mutableStateOf<String?>(null) }
     var progress by remember(file.messageId) { mutableStateOf<Float?>(null) }
+    // Retry re-runs the download effect without closing the dialog.
+    var attempt by remember(file.messageId) { mutableStateOf(0) }
 
-    LaunchedEffect(file.messageId) {
+    LaunchedEffect(file.messageId, attempt) {
         if (!previewable) return@LaunchedEffect
         viewModel.preview(
             file = file,
@@ -219,12 +221,26 @@ fun FilePreviewDialog(
                             textAlign = TextAlign.Center,
                         )
 
-                        failure != null -> Text(
-                            text = failure.orEmpty(),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center,
-                        )
+                        failure != null -> Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = failure.orEmpty(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error,
+                                textAlign = TextAlign.Center,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            TextButton(
+                                onClick = {
+                                    failure = null
+                                    progress = null
+                                    attempt++
+                                },
+                            ) {
+                                Text("Coba lagi")
+                            }
+                        }
 
                         localPath == null -> Column(
                             horizontalAlignment = Alignment.CenterHorizontally,

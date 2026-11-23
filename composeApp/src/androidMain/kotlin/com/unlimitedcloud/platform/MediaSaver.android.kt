@@ -61,4 +61,44 @@ private class AndroidMediaSaver(
             false
         }
     }
+
+    /**
+     * Non-image downloads land in Download/Unlimited Cloud. Without this every
+     * "Unduh" only filled TDLib's cache, which no other app can open.
+     */
+    override suspend fun saveFile(
+        localPath: String,
+        displayName: String,
+        mimeType: String,
+    ): String? = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@withContext null
+
+        val resolver = context.contentResolver
+        val folder = "${Environment.DIRECTORY_DOWNLOADS}/Unlimited Cloud"
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, displayName)
+            put(MediaStore.Downloads.MIME_TYPE, mimeType)
+            put(MediaStore.Downloads.RELATIVE_PATH, folder)
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+
+        val uri = runCatching {
+            resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        }.getOrNull() ?: return@withContext null
+
+        val copied = runCatching {
+            resolver.openOutputStream(uri)?.use { output ->
+                File(localPath).inputStream().use { input -> input.copyTo(output) }
+            } != null
+        }.getOrDefault(false)
+
+        if (!copied) {
+            runCatching { resolver.delete(uri, null, null) }
+            return@withContext null
+        }
+
+        val done = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+        runCatching { resolver.update(uri, done, null, null) }
+        "Download/Unlimited Cloud/$displayName"
+    }
 }

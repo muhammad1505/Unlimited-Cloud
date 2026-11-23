@@ -55,6 +55,12 @@ class CloudChannelManager(
 
     private var cachedChatId: Long? = null
 
+    /** Forgets the channel of the previous account after a logout. */
+    fun forget() {
+        cachedChatId = null
+        state.value = CloudChannelState.Idle
+    }
+
     suspend fun ensureRootChannel(): Long? {
         cachedChatId?.let { return it }
 
