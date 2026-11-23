@@ -11,17 +11,13 @@ import android.widget.VideoView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -42,7 +38,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.unlimitedcloud.ui.components.AppIcons
+import com.unlimitedcloud.ui.components.AudioPlayerControls
 import com.unlimitedcloud.ui.components.CloudFileKind
 import com.unlimitedcloud.ui.components.FileKindIcon
 import java.io.File
@@ -178,28 +174,19 @@ private fun AudioPreview(path: String, fileName: String, modifier: Modifier) {
                 textAlign = TextAlign.Center,
             )
         } else {
-            Slider(
-                value = if (durationMs > 0) {
-                    (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
-                } else {
-                    0f
-                },
-                onValueChange = { fraction ->
-                    if (prepared && durationMs > 0) {
-                        val target = (fraction * durationMs).toInt()
+            AudioPlayerControls(
+                positionMs = positionMs,
+                durationMs = durationMs,
+                playing = playing,
+                enabled = prepared,
+                onSeek = { target ->
+                    if (prepared) {
                         runCatching { player.seekTo(target) }
                         positionMs = target
                     }
                 },
-                enabled = prepared,
-            )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                IconButton(
-                    onClick = {
-                        if (!prepared) return@IconButton
+                onTogglePlay = {
+                    if (prepared) {
                         if (playing) {
                             player.pause()
                             playing = false
@@ -207,21 +194,9 @@ private fun AudioPreview(path: String, fileName: String, modifier: Modifier) {
                             player.start()
                             playing = true
                         }
-                    },
-                    enabled = prepared,
-                ) {
-                    Icon(
-                        imageVector = if (playing) AppIcons.Pause else AppIcons.Play,
-                        contentDescription = if (playing) "Jeda audio" else "Putar audio",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                Text(
-                    text = "${formatDuration(positionMs)} / ${formatDuration(durationMs)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+                    }
+                },
+            )
             if (!prepared) {
                 Text(
                     text = "Menyiapkan audio…",
@@ -231,11 +206,6 @@ private fun AudioPreview(path: String, fileName: String, modifier: Modifier) {
             }
         }
     }
-}
-
-private fun formatDuration(millis: Int): String {
-    val totalSeconds = (millis / 1000).coerceAtLeast(0)
-    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
 
 @Composable

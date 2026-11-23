@@ -2,12 +2,9 @@ package com.unlimitedcloud.platform
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -24,6 +21,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.unlimitedcloud.ui.components.AudioPlayerControls
 import java.io.BufferedInputStream
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -154,39 +152,27 @@ private fun DesktopAudioPreview(path: String, fileName: String, modifier: Modifi
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        Slider(
-            value = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f,
-            onValueChange = { fraction ->
-                val target = (fraction * ready.microsecondLength).toLong()
-                ready.microsecondPosition = target
-                positionMs = (target / 1000L).toInt()
+        AudioPlayerControls(
+            positionMs = positionMs,
+            durationMs = durationMs,
+            playing = playing,
+            enabled = true,
+            onSeek = { target ->
+                ready.microsecondPosition = target * 1000L
+                positionMs = target
+            },
+            onTogglePlay = {
+                if (playing) {
+                    ready.stop()
+                } else {
+                    if (ready.microsecondPosition >= ready.microsecondLength) {
+                        ready.microsecondPosition = 0
+                    }
+                    ready.start()
+                }
+                playing = !playing
             },
         )
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Button(
-                onClick = {
-                    if (playing) {
-                        ready.stop()
-                    } else {
-                        if (ready.microsecondPosition >= ready.microsecondLength) {
-                            ready.microsecondPosition = 0
-                        }
-                        ready.start()
-                    }
-                    playing = !playing
-                },
-            ) {
-                Text(if (playing) "Jeda" else "Putar")
-            }
-            Text(
-                text = "${clockOf(positionMs)} / ${clockOf(durationMs)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
     }
 }
 
@@ -301,8 +287,3 @@ private fun decodeFlac(file: File): PcmAudio? = runCatching {
 
     format?.let { PcmAudio(it, pcm.toByteArray()) }
 }.getOrNull()
-
-private fun clockOf(millis: Int): String {
-    val totalSeconds = (millis / 1000).coerceAtLeast(0)
-    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
-}

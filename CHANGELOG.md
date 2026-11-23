@@ -21,6 +21,12 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.2.9 — 23 November 2026
+
+### Baru
+
+- Kontrol pemutar audio di pratinjau kini tampil sebagai tombol putar bulat dengan bilah geser dan waktu berjalan; posisi baru dicari saat jari atau mouse dilepas sehingga pemutaran tidak tersendat.
+
 ## 1.2.8 — 23 November 2026
 
 ### Baru
