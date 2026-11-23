@@ -11,6 +11,10 @@ data class BatteryOptimizationSnapshot(
     val manufacturer: String? = null,
     /** Human-readable name of the OEM autostart screen, when one is known. */
     val oemHint: String? = null,
+    /** e.g. "Android 14 (SDK 34)"; null on desktop. */
+    val androidVersion: String? = null,
+    /** API level, so the UI can explain the rules of that Android release. */
+    val sdkInt: Int? = null,
 )
 
 /**

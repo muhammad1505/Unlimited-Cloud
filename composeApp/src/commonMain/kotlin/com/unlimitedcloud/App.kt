@@ -67,9 +67,11 @@ fun App() {
 
         // Show "what's new" once per installed version. A fresh install records
         // the current version silently instead of welcoming the user with a
-        // changelog for a release they never ran.
-        LaunchedEffect(splashDone, authState) {
-            if (!splashDone || authState !is AuthUiState.Ready) return@LaunchedEffect
+        // changelog for a release they never ran. It no longer waits for the
+        // Telegram session: after an update the notes appear right after the
+        // splash, even while the user is still signing in.
+        LaunchedEffect(splashDone) {
+            if (!splashDone) return@LaunchedEffect
             val installed = AppBuildInfo.VERSION_CODE
             val seen = preferences.lastSeenVersionCode()
             when {

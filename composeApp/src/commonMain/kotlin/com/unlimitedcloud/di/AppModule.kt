@@ -28,7 +28,7 @@ val appModule = module {
     single<TdJsonClient> { createTdJsonClient() }
     single { TdJsonSession(client = get(), scope = get()) }
     single<TelegramEngine> { TdLibTelegramEngine(session = get(), config = get(), scope = get()) }
-    single { CloudChannelManager(session = get()) }
+    single { CloudChannelManager(session = get(), preferences = get()) }
     single { CloudFileRepository(session = get()) }
     single<GallerySyncSource> { createGallerySyncSource() }
     single<GalleryBackgroundSync> { createGalleryBackgroundSync() }

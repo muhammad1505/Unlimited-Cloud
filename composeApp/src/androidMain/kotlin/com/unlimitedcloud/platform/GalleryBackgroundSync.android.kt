@@ -83,7 +83,7 @@ class GallerySyncWorker(
         if (!preferences.galleryAutoSync() || !preferences.galleryBackgroundSync()) {
             return Result.success()
         }
-        if (preferences.galleryFolderId().isNullOrBlank()) return Result.success()
+        if (preferences.galleryFolders().isEmpty()) return Result.success()
 
         val engine = koin.get<TelegramEngine>()
         engine.start()

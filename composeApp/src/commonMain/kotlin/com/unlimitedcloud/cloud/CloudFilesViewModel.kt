@@ -6,6 +6,7 @@ import com.unlimitedcloud.log.platformTimestamp
 import com.unlimitedcloud.platform.GalleryBackgroundSync
 import com.unlimitedcloud.platform.GalleryFolder
 import com.unlimitedcloud.platform.GallerySyncSource
+import com.unlimitedcloud.platform.LocalFolderSelection
 import com.unlimitedcloud.platform.MediaSaver
 import com.unlimitedcloud.settings.AppPreferences
 import kotlinx.coroutines.CoroutineScope
@@ -61,7 +62,7 @@ data class ExplorerUiState(
     val galleryAutoSync: Boolean = false,
     val galleryBackgroundSupported: Boolean = false,
     val galleryBackgroundSync: Boolean = false,
-    val galleryFolderName: String? = null,
+    val galleryFolders: List<GalleryFolder> = emptyList(),
     val gallerySyncing: Boolean = false,
     val galleryLastSync: String? = null,
     val gallerySyncedCount: Int = 0,
@@ -115,7 +116,7 @@ class CloudFilesViewModel(
             galleryAutoSync = preferences.galleryAutoSync(),
             galleryBackgroundSupported = backgroundSync.supported,
             galleryBackgroundSync = preferences.galleryBackgroundSync(),
-            galleryFolderName = preferences.galleryFolderName(),
+            galleryFolders = preferences.galleryFolders(),
             galleryLastSync = preferences.galleryLastSync(),
             gallerySyncedCount = preferences.gallerySyncedKeys().size,
             autoSaveSupported = mediaSaver.supported,
@@ -258,6 +259,76 @@ class CloudFilesViewModel(
     }
 
     /**
+     * Uploads every file of a picked folder into one virtual folder. Progress is
+     * tracked per file, so the Transfer tab lists them like single uploads.
+     */
+    fun uploadFolder(selection: LocalFolderSelection, folder: String?) {
+        if (selection.files.isEmpty()) {
+            reportError("Folder ${selection.name} tidak berisi berkas")
+            return
+        }
+        val target = folder?.trim()?.takeIf { it.isNotEmpty() } ?: selection.name
+        logDiagnostic(
+            LOG_TAG,
+            "unggah folder: ${selection.name} (${selection.files.size} berkas) → $target",
+        )
+        state.update {
+            it.copy(
+                status = "Mengunggah ${selection.files.size} berkas dari ${selection.name}…",
+                error = null,
+            )
+        }
+
+        scope.launch {
+            val chatId = channelManager.ensureRootChannel()
+            if (chatId == null) {
+                reportError("Channel penyimpanan belum siap")
+                return@launch
+            }
+
+            var uploaded = 0
+            var failed = 0
+
+            selection.files.forEach { path ->
+                val transferId = "transfer-${++transferCounter}"
+                val fileName = path.substringAfterLast('/').substringAfterLast('\\')
+                state.update { current ->
+                    current.copy(
+                        transfers = listOf(
+                            TransferItem(
+                                id = transferId,
+                                fileName = fileName.ifBlank { "berkas" },
+                                direction = TransferDirection.Upload,
+                                progress = 0f,
+                            ),
+                        ) + current.transfers,
+                    )
+                }
+
+                uploadFile(transferId, chatId, path, target).fold(
+                    onSuccess = { uploaded++ },
+                    onFailure = { failure ->
+                        failed++
+                        logDiagnostic(LOG_TAG, "folder gagal: $fileName: ${failure.message}")
+                    },
+                )
+            }
+
+            if (uploaded > 0) refresh()
+            state.update {
+                it.copy(
+                    status = if (uploaded > 0) {
+                        "$uploaded berkas dari ${selection.name} diunggah"
+                    } else {
+                        null
+                    },
+                    error = if (failed > 0) "$failed berkas gagal diunggah" else null,
+                )
+            }
+        }
+    }
+
+    /**
      * Downloads [file] and hands the local path to [onDownloaded]. Used by the
      * share action, which needs TDLib's local copy before it can build an
      * `ACTION_SEND` intent.
@@ -380,17 +451,24 @@ class CloudFilesViewModel(
         state.update { it.copy(autoSavePhotos = enabled) }
     }
 
-    fun setGalleryFolder(folder: GalleryFolder) {
-        preferences.setGalleryFolder(folder.id, folder.name)
-        state.update { it.copy(galleryFolderName = folder.name) }
+    /** Adds one folder to the sync set; picking the same tree twice is a no-op. */
+    fun addGalleryFolder(folder: GalleryFolder) {
+        preferences.addGalleryFolder(folder)
+        state.update { it.copy(galleryFolders = preferences.galleryFolders()) }
         refreshBackgroundSchedule()
         syncGallery(auto = true)
     }
 
-    fun clearGalleryFolder() {
-        preferences.setGalleryFolder(null, null)
+    fun removeGalleryFolder(id: String) {
+        preferences.removeGalleryFolder(id)
+        state.update { it.copy(galleryFolders = preferences.galleryFolders()) }
+        refreshBackgroundSchedule()
+    }
+
+    fun clearGalleryFolders() {
+        preferences.clearGalleryFolders()
         preferences.clearGallerySyncedKeys()
-        state.update { it.copy(galleryFolderName = null, gallerySyncedCount = 0) }
+        state.update { it.copy(galleryFolders = emptyList(), gallerySyncedCount = 0) }
         refreshBackgroundSchedule()
     }
 
@@ -416,9 +494,8 @@ class CloudFilesViewModel(
         // "Sinkronkan sekarang" action ignores it.
         if (auto && !preferences.galleryAutoSync()) return
 
-        val folderId = preferences.galleryFolderId()
-        val folderName = state.value.galleryFolderName ?: preferences.galleryFolderName()
-        if (folderId == null || folderName.isNullOrBlank()) {
+        val folders = preferences.galleryFolders()
+        if (folders.isEmpty()) {
             if (!auto) reportError("Pilih folder galeri terlebih dahulu")
             return
         }
@@ -434,25 +511,27 @@ class CloudFilesViewModel(
                 return@launch
             }
 
-            val folder = GalleryFolder(id = folderId, name = folderName)
-            val photos = runCatching {
-                gallerySource.pendingPhotos(
-                    folder = folder,
-                    alreadySynced = preferences.gallerySyncedKeys(),
-                    limit = limit,
-                )
-            }.getOrElse { failure ->
-                state.update {
-                    it.copy(
-                        gallerySyncing = false,
-                        error = failure.message ?: "Gagal membaca folder galeri",
-                    )
-                }
-                return@launch
-            }
-
             var uploaded = 0
             var failed = 0
+
+            // Every selected folder contributes its own incremental batch, so a
+            // second folder does not wait for the first one to be exhausted.
+            val photos = folders.flatMap { folder ->
+                runCatching {
+                    gallerySource.pendingPhotos(
+                        folder = folder,
+                        alreadySynced = preferences.gallerySyncedKeys(),
+                        limit = limit,
+                    )
+                }.getOrElse { failure ->
+                    failed++
+                    logDiagnostic(
+                        LOG_TAG,
+                        "galeri ${folder.name} gagal dibaca: ${failure.message}",
+                    )
+                    emptyList()
+                }
+            }
 
             photos.forEach { photo ->
                 val transferId = "transfer-${++transferCounter}"
@@ -530,7 +609,7 @@ class CloudFilesViewModel(
         if (!backgroundSync.supported) return
         val active = state.value.galleryAutoSync &&
             preferences.galleryBackgroundSync() &&
-            !state.value.galleryFolderName.isNullOrBlank()
+            preferences.galleryFolders().isNotEmpty()
         if (active) backgroundSync.schedule() else backgroundSync.cancel()
     }
 

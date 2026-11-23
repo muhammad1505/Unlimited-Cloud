@@ -29,6 +29,8 @@ private class AndroidBatteryOptimizationController(
             ignoringOptimizations = ignoring,
             manufacturer = manufacturer,
             oemHint = OemSettings.forManufacturer(manufacturer)?.label,
+            androidVersion = "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})",
+            sdkInt = Build.VERSION.SDK_INT,
         )
     }
 

@@ -81,13 +81,14 @@ android {
         }
     }
 
-    // One APK per CPU architecture instead of a universal APK: libtdjson.so alone
-    // is 31 MB (arm64) and 20 MB (v7a), so bundling both wasted space per device.
+    // arm64 only: libtdjson.so alone is 31 MB and 32-bit devices are a rounding
+    // error on the Play install base, so shipping a second APK doubled the build
+    // time and the release size for no real audience.
     splits {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a", "armeabi-v7a")
+            include("arm64-v8a")
             isUniversalApk = false
         }
     }

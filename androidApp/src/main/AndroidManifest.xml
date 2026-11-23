@@ -12,6 +12,9 @@
     <uses-permission
         android:name="android.permission.DUMP"
         tools:node="remove" />
+    <uses-permission-sdk-23
+        android:name="android.permission.DUMP"
+        tools:node="remove" />
 
     <application
         android:allowBackup="false"

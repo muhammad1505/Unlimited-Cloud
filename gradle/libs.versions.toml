@@ -51,6 +51,9 @@ androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version
 
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 tdlight-natives-linux = { module = "it.tdlight:tdlight-natives-linux-amd64", version.ref = "tdlightNatives" }
+# Windows natives are only needed by the Windows packaging job, so that
+# dependency is gated behind a Gradle property instead of bloating every build.
+tdlight-natives-windows = { module = "it.tdlight:tdlight-natives-windows-amd64", version.ref = "tdlightNatives" }
 
 [plugins]
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

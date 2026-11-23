@@ -9,6 +9,11 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 - satu perubahan per baris
 
 ### Perbaikan
+- Channel penyimpanan tidak lagi dibuat ulang setiap aplikasi dibuka: id channel disimpan dan divalidasi sebelum mencari atau membuat yang baru.
+- Izin DUMP tidak lagi masuk ke APK sehingga peringatan izin Play Protect hilang, dan CI memeriksa daftar izin APK hasil build.
+- Pop-up changelog muncul tepat setelah splash saat aplikasi diperbarui, tanpa menunggu sesi Telegram siap.
+- APK rilis hanya untuk arm64 sehingga build lebih cepat dan unduhan lebih kecil.
+- CI memisahkan build Android arm64 dan paket desktop; rilis tag memakai artefak build yang sudah lulus.
 - satu perbaikan per baris
 ```
 
@@ -16,6 +21,22 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.3.0 — 23 November 2026
+
+### Baru
+
+- Unggah folder: pilih satu folder di perangkat dan semua berkas di dalamnya diunggah ke folder tujuan sekaligus.
+- Sinkronisasi galeri kini menerima beberapa folder sekaligus, masing-masing dengan batch inkremental sendiri.
+- Menu optimasi baterai menampilkan versi Android dan menyesuaikan saran dengan aturan Doze/App Standby versi tersebut.
+- Rilis kini juga menyertakan paket desktop: installer Linux (deb, rpm) dan Windows (msi).
+
+### Perbaikan
+
+- Channel penyimpanan tidak lagi dibuat ulang setiap aplikasi dibuka: id channel disimpan dan divalidasi sebelum mencari atau membuat yang baru.
+- Izin DUMP tidak lagi masuk ke APK sehingga peringatan izin Play Protect hilang, dan CI memeriksa daftar izin APK yang dibangun.
+- Pop-up changelog muncul tepat setelah splash saat aplikasi diperbarui, tanpa menunggu sesi Telegram siap.
+- APK rilis hanya untuk arm64 sehingga build lebih cepat dan unduhan lebih kecil.
+- CI memisahkan build Android arm64 dan paket desktop; rilis tag memakai artefak build yang sudah lulus.
 ## 1.2.0 — 23 November 2026
 
 ### Baru

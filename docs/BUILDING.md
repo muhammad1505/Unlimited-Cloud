@@ -32,8 +32,8 @@ kredensial diisi.
 ## Native TDLib Android
 
 ```bash
-bash scripts/fetch-tdlib-android.sh              # arm64-v8a + armeabi-v7a
-bash scripts/fetch-tdlib-android.sh arm64-v8a    # satu ABI saja
+bash scripts/fetch-tdlib-android.sh              # arm64-v8a (satu-satunya ABI rilis)
+bash scripts/fetch-tdlib-android.sh x86_64       # tambahan untuk emulator 64-bit
 ```
 
 Skrip mengunduh arsip dari rilis `up9cloud/android-libtdjson` versi 1.8.65,
@@ -53,8 +53,9 @@ memverifikasi SHA-256, lalu menyalin `libtdjson.so` ke
 # APK release bertanda tangan (butuh signing)
 ./gradlew :androidApp:assembleRelease
 
-# Paket desktop (DMG/MSI/DEB)
-./gradlew :composeApp:packageDistributionForCurrentOS
+# Paket desktop: deb + rpm di Linux, msi di Windows
+./gradlew :composeApp:packageDeb :composeApp:packageRpm
+./gradlew.bat :composeApp:packageMsi -Punlimitedcloud.windowsNatives=true
 ```
 
 ## Signing Android

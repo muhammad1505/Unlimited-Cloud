@@ -62,6 +62,7 @@ import com.unlimitedcloud.platform.ShareRequest
 import com.unlimitedcloud.platform.ShareResult
 import com.unlimitedcloud.platform.rememberFileSharer
 import com.unlimitedcloud.platform.rememberLocalFilePicker
+import com.unlimitedcloud.platform.rememberLocalFolderPicker
 import com.unlimitedcloud.ui.components.AppIcons
 import com.unlimitedcloud.ui.components.AppTextField
 import com.unlimitedcloud.ui.components.ConfirmDialog
@@ -93,6 +94,12 @@ fun FilesScreen(
     val picker = rememberLocalFilePicker { path ->
         if (path != null) {
             viewModel.upload(path, uploadFolder)
+        }
+    }
+
+    val folderPicker = rememberLocalFolderPicker { selection ->
+        if (selection != null) {
+            viewModel.uploadFolder(selection, uploadFolder)
         }
     }
 
@@ -343,6 +350,11 @@ fun FilesScreen(
                 uploadFolder = folder
                 showUploadDialog = false
                 picker()
+            },
+            onPickFolder = { folder ->
+                uploadFolder = folder
+                showUploadDialog = false
+                folderPicker()
             },
         )
     }
@@ -845,6 +857,7 @@ private fun UploadDialog(
     initialFolder: String?,
     onDismiss: () -> Unit,
     onConfirm: (String?) -> Unit,
+    onPickFolder: (String?) -> Unit,
 ) {
     var folder by remember { mutableStateOf(initialFolder) }
     var customFolder by remember { mutableStateOf("") }
@@ -888,7 +901,7 @@ private fun UploadDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Unggah berkas", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            text = "Pilih folder tujuan, lalu pilih berkas dari perangkat.",
+                            text = "Pilih folder tujuan, lalu unggah satu berkas atau seluruh folder.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -953,6 +966,16 @@ private fun UploadDialog(
                 ) {
                     TextButton(onClick = onDismiss) {
                         Text("Batal")
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    TextButton(onClick = { onPickFolder(chosenFolder) }) {
+                        Icon(
+                            imageVector = AppIcons.Folder,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Unggah folder")
                     }
                     Spacer(Modifier.width(8.dp))
                     GradientButton(

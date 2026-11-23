@@ -60,12 +60,15 @@ python3 scripts/preflight.py
 ```text
 push / PR ke main
   ├─ static-checks : preflight, version+changelog, izin, regression guards
-  └─ build         : kompilasi desktop, fetch TDLib, APK release bertanda tangan,
-                     verifikasi apksigner, artefak APK + mapping
+  ├─ android       : kompilasi desktop, fetch TDLib arm64, APK release bertanda
+  │                  tangan, verifikasi apksigner + daftar izin APK, artefak APK
+  ├─ desktop-linux : packageDeb + packageRpm di Ubuntu
+  └─ desktop-windows: packageMsi di Windows (dengan native libtdjson.dll)
 
 tag vX.Y.Z
-  └─ release       : tag harus sama dengan gradle.properties, ambil artefak dari
-                     build main yang sukses untuk commit ini, buat GitHub Release
+  └─ release       : tag harus sama dengan gradle.properties, ambil APK + deb +
+                     rpm + msi dari build main yang sukses untuk commit ini, buat
+                     GitHub Release
 ```
 
 Karena job release tidak membangun ulang, commit harus sudah lolos build di `main`
@@ -96,6 +99,9 @@ sebelum tag dibuat.
       `MANAGE_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`).
 - [ ] Tidak ada `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`; panduan baterai hanya
       membuka pengaturan sistem.
+- [ ] `python3 scripts/check-apk-permissions.py` lolos: hanya INTERNET,
+      ACCESS_NETWORK_STATE, dan izin WorkManager yang tersisa (tanpa `DUMP`, tanpa
+      izin penyimpanan).
 - [ ] Sync latar belakang tetap memakai WorkManager tanpa layanan latar depan dan
       tanpa izin media/penyimpanan.
 - [ ] Data safety: tidak ada data yang dikirim ke server aplikasi; berkas tersimpan

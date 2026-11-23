@@ -8,7 +8,7 @@
 # statically linked STL, 16 KB page aligned for Android 15+).
 #
 # Usage: scripts/fetch-tdlib-android.sh [abi...]
-#   Default ABIs: arm64-v8a armeabi-v7a
+#   Default ABI: arm64-v8a (the only one the release APK ships)
 #   Pass x86_64 to also support 64-bit emulators.
 set -euo pipefail
 
@@ -24,7 +24,7 @@ ARCHIVE="$CACHE/libs-${TDLIB_VERSION}.tar.gz"
 if [ "$#" -gt 0 ]; then
     ABIS=("$@")
 else
-    ABIS=(arm64-v8a armeabi-v7a)
+    ABIS=(arm64-v8a)
 fi
 
 sha256_of() {

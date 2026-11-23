@@ -1,5 +1,6 @@
 package com.unlimitedcloud.settings
 
+import com.unlimitedcloud.platform.GalleryFolder
 import com.unlimitedcloud.platform.PlatformStorage
 import com.unlimitedcloud.ui.theme.ThemeMode
 import okio.FileSystem
@@ -33,6 +34,18 @@ class AppPreferences(
 
     fun saveThemeMode(mode: ThemeMode) = put(KEY_THEME, mode.name)
 
+    // --- Storage channel -------------------------------------------------------
+
+    /**
+     * Chat id of the channel that holds the files. Remembering it is what keeps
+     * the app from creating a fresh channel every launch: the title search can
+     * miss a channel that TDLib has not indexed on this device yet.
+     */
+    fun cloudRootChatId(): Long? = get(KEY_CLOUD_ROOT_CHAT_ID)?.toLongOrNull()
+
+    fun setCloudRootChatId(chatId: Long?) =
+        put(KEY_CLOUD_ROOT_CHAT_ID, chatId?.toString())
+
     // --- Changelog gating ------------------------------------------------------
 
     /**
@@ -56,13 +69,60 @@ class AppPreferences(
     fun setGalleryBackgroundSync(enabled: Boolean) =
         put(KEY_GALLERY_BACKGROUND_SYNC, enabled.toString())
 
-    fun galleryFolderId(): String? = get(KEY_GALLERY_FOLDER_ID)
+    /**
+     * Every folder the user picked, in the order they added them. One entry per
+     * line, `id<TAB>name`; SAF tree ids never contain a tab or a newline.
+     */
+    fun galleryFolders(): List<GalleryFolder> {
+        val stored = get(KEY_GALLERY_FOLDERS)
+            ?.lineSequence()
+            ?.mapNotNull { line ->
+                val separator = line.indexOf('\t')
+                if (separator <= 0) return@mapNotNull null
+                val id = line.substring(0, separator).trim()
+                val name = line.substring(separator + 1).trim()
+                if (id.isEmpty() || name.isEmpty()) null else GalleryFolder(id = id, name = name)
+            }
+            ?.toList()
+            .orEmpty()
+        if (stored.isNotEmpty()) return stored
 
-    fun galleryFolderName(): String? = get(KEY_GALLERY_FOLDER_NAME)
+        // Settings written by builds that supported a single folder only.
+        val legacyId = get(KEY_GALLERY_FOLDER_ID)
+        val legacyName = get(KEY_GALLERY_FOLDER_NAME)
+        return if (legacyId.isNullOrBlank() || legacyName.isNullOrBlank()) {
+            emptyList()
+        } else {
+            listOf(GalleryFolder(id = legacyId, name = legacyName))
+        }
+    }
 
-    fun setGalleryFolder(id: String?, name: String?) {
-        put(KEY_GALLERY_FOLDER_ID, id)
-        put(KEY_GALLERY_FOLDER_NAME, name)
+    fun addGalleryFolder(folder: GalleryFolder) {
+        writeGalleryFolders(galleryFolders().filterNot { it.id == folder.id } + folder)
+    }
+
+    fun removeGalleryFolder(id: String) =
+        writeGalleryFolders(galleryFolders().filterNot { it.id == id })
+
+    fun clearGalleryFolders() {
+        put(KEY_GALLERY_FOLDERS, null)
+        put(KEY_GALLERY_FOLDER_ID, null)
+        put(KEY_GALLERY_FOLDER_NAME, null)
+    }
+
+    private fun writeGalleryFolders(folders: List<GalleryFolder>) {
+        // A list write always replaces the legacy single-folder pair, otherwise a
+        // removed folder could reappear through the old keys.
+        put(KEY_GALLERY_FOLDER_ID, null)
+        put(KEY_GALLERY_FOLDER_NAME, null)
+        if (folders.isEmpty()) {
+            put(KEY_GALLERY_FOLDERS, null)
+            return
+        }
+        put(
+            KEY_GALLERY_FOLDERS,
+            folders.joinToString("\n") { folder -> "${folder.id}\t${folder.name}" },
+        )
     }
 
     /** Document keys already uploaded; keeps repeated syncs incremental. */
@@ -159,9 +219,11 @@ class AppPreferences(
 
     private companion object {
         const val KEY_THEME = "theme"
+        const val KEY_CLOUD_ROOT_CHAT_ID = "cloud.rootChatId"
         const val KEY_LAST_SEEN_VERSION = "changelog.lastSeenVersionCode"
         const val KEY_GALLERY_AUTO_SYNC = "gallery.autoSync"
         const val KEY_GALLERY_BACKGROUND_SYNC = "gallery.backgroundSync"
+        const val KEY_GALLERY_FOLDERS = "gallery.folders"
         const val KEY_GALLERY_FOLDER_ID = "gallery.folderId"
         const val KEY_GALLERY_FOLDER_NAME = "gallery.folderName"
         const val KEY_GALLERY_SYNCED_KEYS = "gallery.syncedKeys"

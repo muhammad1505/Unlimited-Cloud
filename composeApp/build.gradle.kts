@@ -216,6 +216,11 @@ kotlin {
             // libtdjson.so for this host.
             implementation(libs.jna)
             implementation(libs.tdlight.natives.linux)
+            // The Windows job passes -Punlimitedcloud.windowsNatives=true so its MSI
+            // carries libtdjson.dll; every other build skips that download.
+            if (providers.gradleProperty("unlimitedcloud.windowsNatives").orNull == "true") {
+                implementation(libs.tdlight.natives.windows)
+            }
         }
     }
 }
@@ -239,7 +244,9 @@ compose.desktop {
         mainClass = "com.unlimitedcloud.MainKt"
 
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            // Release artifacts: Linux deb + rpm and Windows msi. CI builds each
+            // one on its own runner, so a target is never cross-packaged.
+            targetFormats(TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.Msi)
             packageName = "UnlimitedCloud"
             packageVersion = appVersionName
         }

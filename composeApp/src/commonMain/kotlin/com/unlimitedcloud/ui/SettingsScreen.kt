@@ -49,6 +49,7 @@ import com.unlimitedcloud.cloud.CloudChannelState
 import com.unlimitedcloud.cloud.CloudFilesViewModel
 import com.unlimitedcloud.cloud.ExplorerUiState
 import com.unlimitedcloud.log.LogStore
+import com.unlimitedcloud.platform.BatteryOptimizationSnapshot
 import com.unlimitedcloud.platform.rememberBatteryOptimizationController
 import com.unlimitedcloud.platform.rememberGalleryFolderPicker
 import com.unlimitedcloud.ui.components.AppAvatar
@@ -84,7 +85,7 @@ fun SettingsScreen(
 
     val pickGalleryFolder = rememberGalleryFolderPicker { folder ->
         if (folder != null) {
-            viewModel.setGalleryFolder(folder)
+            viewModel.addGalleryFolder(folder)
         } else {
             viewModel.reportStatus("Pemilihan folder dibatalkan")
         }
@@ -182,10 +183,10 @@ fun SettingsScreen(
 
         GalleryCard(
             state = filesState,
-            onPickFolder = pickGalleryFolder,
+            onAddFolder = pickGalleryFolder,
+            onRemoveFolder = viewModel::removeGalleryFolder,
             onGalleryAutoSyncChange = viewModel::setGalleryAutoSync,
             onBackgroundSyncChange = viewModel::setGalleryBackgroundSync,
-            onClearFolder = viewModel::clearGalleryFolder,
             onSyncNow = { viewModel.syncGallery() },
             onResetSync = viewModel::resetGallerySync,
         )
@@ -226,11 +227,17 @@ fun SettingsScreen(
                         Color(0xFFF59E0B)
                     },
                 )
+                battery.androidVersion?.let { version ->
+                    InfoRow(
+                        icon = AppIcons.Phone,
+                        title = "Versi Android",
+                        value = version,
+                        tint = MaterialTheme.colorScheme.secondary,
+                    )
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Unlimited Cloud tidak meminta izin pengecualian otomatis. " +
-                        "Tombol di bawah hanya membuka pengaturan sistem, sehingga keputusan " +
-                        "tetap ada di tangan Anda.",
+                    text = batteryGuidance(battery),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -400,10 +407,10 @@ fun SettingsScreen(
 @Composable
 private fun GalleryCard(
     state: ExplorerUiState,
-    onPickFolder: () -> Unit,
+    onAddFolder: () -> Unit,
+    onRemoveFolder: (String) -> Unit,
     onGalleryAutoSyncChange: (Boolean) -> Unit,
     onBackgroundSyncChange: (Boolean) -> Unit,
-    onClearFolder: () -> Unit,
     onSyncNow: () -> Unit,
     onResetSync: () -> Unit,
 ) {
@@ -425,8 +432,9 @@ private fun GalleryCard(
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Foto di folder galeri pilihan Anda diunggah ke folder Galeri di channel " +
-                "Telegram. Akses memakai pemilih folder sistem, tanpa izin penyimpanan.",
+            text = "Foto dari setiap folder galeri yang Anda pilih diunggah ke folder Galeri " +
+                "di channel Telegram. Anda bisa memilih beberapa folder sekaligus; akses " +
+                "memakai pemilih folder sistem, tanpa izin penyimpanan.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -446,17 +454,55 @@ private fun GalleryCard(
         InfoRow(
             icon = AppIcons.Gallery,
             title = "Folder galeri",
-            value = state.galleryFolderName ?: "Belum dipilih",
+            value = when (state.galleryFolders.size) {
+                0 -> "Belum dipilih"
+                1 -> state.galleryFolders.first().name
+                else -> "${state.galleryFolders.size} folder dipilih"
+            },
         )
+        if (state.galleryFolders.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                state.galleryFolders.forEach { folder ->
+                    FilterChip(
+                        selected = true,
+                        onClick = { onRemoveFolder(folder.id) },
+                        label = { Text(folder.name) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = AppIcons.Folder,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        },
+                        trailingIcon = {
+                            Icon(
+                                imageVector = AppIcons.Close,
+                                contentDescription = "Lepas ${folder.name}",
+                                modifier = Modifier.size(14.dp),
+                            )
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.13f),
+                            selectedLabelColor = MaterialTheme.colorScheme.primary,
+                            selectedLeadingIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTrailingIconColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                }
+            }
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,
         ) {
-            if (state.galleryFolderName != null) {
-                TextButton(onClick = onClearFolder) { Text("Lepas") }
-            }
-            TextButton(onClick = onPickFolder) {
-                Text(if (state.galleryFolderName == null) "Pilih folder" else "Ganti folder")
+            TextButton(onClick = onAddFolder) {
+                Text(if (state.galleryFolders.isEmpty()) "Pilih folder" else "Tambah folder")
             }
         }
 
@@ -478,7 +524,7 @@ private fun GalleryCard(
             Switch(
                 checked = state.galleryAutoSync,
                 onCheckedChange = onGalleryAutoSyncChange,
-                enabled = state.galleryFolderName != null,
+                enabled = state.galleryFolders.isNotEmpty(),
             )
         }
 
@@ -497,7 +543,7 @@ private fun GalleryCard(
                 Switch(
                     checked = state.galleryBackgroundSync,
                     onCheckedChange = onBackgroundSyncChange,
-                    enabled = state.galleryAutoSync && state.galleryFolderName != null,
+                    enabled = state.galleryAutoSync && state.galleryFolders.isNotEmpty(),
                 )
             }
         }
@@ -527,7 +573,7 @@ private fun GalleryCard(
             }
             TextButton(
                 onClick = onSyncNow,
-                enabled = state.galleryFolderName != null && !state.gallerySyncing,
+                enabled = state.galleryFolders.isNotEmpty() && !state.gallerySyncing,
             ) {
                 Text(if (state.gallerySyncing) "Menyinkronkan…" else "Sinkronkan sekarang")
             }
@@ -647,6 +693,29 @@ private fun ThemeOption(
             selectedLeadingIconColor = MaterialTheme.colorScheme.primary,
         ),
     )
+}
+
+/**
+ * Power guidance that follows the installed Android release: the advice for
+ * Android 13's per-app "Restricted" battery setting is wrong on Android 8,
+ * where only Doze exists.
+ */
+private fun batteryGuidance(snapshot: BatteryOptimizationSnapshot): String {
+    val base = "Unlimited Cloud tidak meminta izin pengecualian otomatis. Tombol di bawah " +
+        "hanya membuka pengaturan sistem, sehingga keputusan tetap ada di tangan Anda."
+    val sdk = snapshot.sdkInt ?: return base
+    val detail = when {
+        sdk >= 33 ->
+            "Android 13 ke atas menambahkan batas baterai \"Restricted\" per aplikasi; " +
+                "pilih \"Tanpa batasan\" agar unggahan tidak dijeda."
+        sdk >= 31 ->
+            "Android 12 membatasi aplikasi yang jarang dibuka lewat App Standby; " +
+                "kecualikan aplikasi ini dari optimasi."
+        sdk >= 26 ->
+            "Android 8–11 memakai Doze: unggahan besar bisa berhenti saat layar mati."
+        else -> "Versi Android $sdk memakai aturan Doze lama."
+    }
+    return "$detail $base"
 }
 
 private fun channelLabel(state: CloudChannelState): String = when (state) {
