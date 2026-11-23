@@ -221,7 +221,7 @@ class CloudFilesViewModel(
         val id = "transfer-${++transferCounter}"
         val fileName = localPath.substringAfterLast('/').substringAfterLast('\\').ifBlank { "berkas" }
         val normalizedFolder = folder?.trim()?.takeIf { it.isNotEmpty() }
-        logDiagnostic(LOG_TAG, "unggah mulai: $fileName → ${normalizedFolder ?: \"(root)\"}")
+        logDiagnostic(LOG_TAG, "unggah mulai: $fileName → ${normalizedFolder ?: "(root)"}")
 
         state.update {
             it.copy(
