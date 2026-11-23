@@ -35,7 +35,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.unlimitedcloud.ui.components.AudioPlayerControls
@@ -76,7 +75,7 @@ actual fun PlatformMediaPreview(path: String, fileName: String, modifier: Modifi
     when {
         extension in previewVideoExtensions -> VideoPreview(path = path, modifier = modifier)
         extension in previewAudioExtensions ->
-            AudioPreview(path = path, fileName = fileName, modifier = modifier)
+            AudioPreview(path = path, modifier = modifier)
         extension == "pdf" -> PdfPreview(path = path, modifier = modifier)
         else -> PlatformPreviewMessage(
             text = "Jenis berkas ini belum bisa dipratinjau. Unduh atau bagikan untuk membukanya.",
@@ -111,7 +110,7 @@ private fun VideoPreview(path: String, modifier: Modifier) {
 }
 
 @Composable
-private fun AudioPreview(path: String, fileName: String, modifier: Modifier) {
+private fun AudioPreview(path: String, modifier: Modifier) {
     var prepared by remember(path) { mutableStateOf(false) }
     var playing by remember(path) { mutableStateOf(false) }
     var durationMs by remember(path) { mutableIntStateOf(0) }
@@ -153,17 +152,11 @@ private fun AudioPreview(path: String, fileName: String, modifier: Modifier) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(16.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        FileKindIcon(kind = CloudFileKind.Audio, size = 64.dp)
-        Text(
-            text = fileName,
-            style = MaterialTheme.typography.titleSmall,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
+        FileKindIcon(kind = CloudFileKind.Audio, size = 56.dp)
 
         val error = failure
         if (error != null) {

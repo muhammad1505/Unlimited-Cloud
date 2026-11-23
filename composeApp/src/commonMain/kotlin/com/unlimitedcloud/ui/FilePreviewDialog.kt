@@ -1,6 +1,8 @@
 package com.unlimitedcloud.ui
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,16 +13,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -33,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.ImageBitmap
@@ -153,8 +159,8 @@ fun FilePreviewDialog(
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 24.dp,
         ) {
-            Column(modifier = Modifier.padding(18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+                Row(verticalAlignment = Alignment.Top) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = file.name,
@@ -162,9 +168,10 @@ fun FilePreviewDialog(
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        Spacer(Modifier.height(2.dp))
                         Text(
                             text = "${cloudFileKind(file.name).label} · ${formatBytes(file.size)}",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -172,44 +179,74 @@ fun FilePreviewDialog(
                         IconButton(
                             onClick = { onIndexChange(index - 1) },
                             enabled = index > 0,
+                            modifier = Modifier.size(40.dp),
                         ) {
                             Icon(
                                 imageVector = AppIcons.ChevronLeft,
                                 contentDescription = "Berkas sebelumnya",
+                                modifier = Modifier.size(20.dp),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Text(
-                            text = "${index + 1}/${files.size}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        ) {
+                            Text(
+                                text = "${index + 1} / ${files.size}",
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         IconButton(
                             onClick = { onIndexChange(index + 1) },
                             enabled = index < files.lastIndex,
+                            modifier = Modifier.size(40.dp),
                         ) {
                             Icon(
                                 imageVector = AppIcons.ChevronRight,
                                 contentDescription = "Berkas berikutnya",
+                                modifier = Modifier.size(20.dp),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
-                    IconButton(onClick = onDismiss) {
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(40.dp),
+                    ) {
                         Icon(
                             imageVector = AppIcons.Close,
                             contentDescription = "Tutup pratinjau",
+                            modifier = Modifier.size(20.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(14.dp))
 
+                // The content sits in a softly tinted panel, the same tone the
+                // audio transport card uses, so image, text and audio previews
+                // share one surface instead of floating on the dialog.
+                val loading = previewable && failure == null && localPath == null
+                val panelShape = RoundedCornerShape(16.dp)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 460.dp),
+                        .heightIn(
+                            min = if (loading || !previewable) 190.dp else 0.dp,
+                            max = 460.dp,
+                        )
+                        .clip(panelShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f))
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                            shape = panelShape,
+                        )
+                        .padding(if (previewable && localPath != null) 10.dp else 20.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     when {
@@ -249,20 +286,22 @@ fun FilePreviewDialog(
                             if (fraction != null) {
                                 LinearProgressIndicator(
                                     progress = { fraction.coerceIn(0f, 1f) },
-                                    modifier = Modifier.fillMaxWidth(0.7f),
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.65f)
+                                        .clip(RoundedCornerShape(50)),
                                 )
                                 Spacer(Modifier.height(10.dp))
                                 Text(
                                     text = "Mengunduh pratinjau ${(fraction * 100).toInt()}%",
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             } else {
-                                CircularProgressIndicator()
+                                CircularProgressIndicator(strokeWidth = 3.dp)
                                 Spacer(Modifier.height(10.dp))
                                 Text(
                                     text = "Menyiapkan pratinjau…",
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -272,28 +311,14 @@ fun FilePreviewDialog(
                     }
                 }
 
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(14.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(
-                        onClick = {
-                            onDownload(file)
-                            onDismiss()
-                        },
-                    ) {
-                        Icon(
-                            imageVector = AppIcons.Download,
-                            contentDescription = null,
-                            modifier = Modifier.width(18.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("Unduh")
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    TextButton(
+                    OutlinedButton(
                         onClick = {
                             onShare(file)
                             onDismiss()
@@ -302,17 +327,31 @@ fun FilePreviewDialog(
                         Icon(
                             imageVector = AppIcons.Share,
                             contentDescription = null,
-                            modifier = Modifier.width(18.dp),
+                            modifier = Modifier.size(18.dp),
                         )
-                        Spacer(Modifier.width(6.dp))
+                        Spacer(Modifier.width(8.dp))
                         Text("Bagikan")
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    FilledTonalButton(
+                        onClick = {
+                            onDownload(file)
+                            onDismiss()
+                        },
+                    ) {
+                        Icon(
+                            imageVector = AppIcons.Download,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Unduh")
                     }
                 }
             }
         }
     }
 }
-
 @Composable
 private fun PreviewContent(file: CloudFile, path: String) {
     when {
@@ -371,7 +410,8 @@ private fun TextPreview(path: String) {
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 440.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 4.dp),
         ) {
             Text(
                 text = content,
