@@ -154,7 +154,7 @@ class CloudChannelManager(
         val serverIds = searchChatIds("searchChatsOnServer")
             .ifEmpty { searchChatIds("searchChats") }
         serverIds.forEach { chatId ->
-            if (isRootChannel(chatId)) return chatId
+            if (checkRootChannel(chatId) == Check.Valid) return chatId
         }
 
         // Last resort: walk the loaded chat list. `loadChats` only fills the local
@@ -183,7 +183,7 @@ class CloudChannelManager(
         )["chat_ids"]?.jsonArray?.mapNotNull { it.jsonPrimitive.longOrNull }.orEmpty()
 
         knownIds.forEach { chatId ->
-            if (isRootChannel(chatId)) return chatId
+            if (checkRootChannel(chatId) == Check.Valid) return chatId
         }
         return null
     }
