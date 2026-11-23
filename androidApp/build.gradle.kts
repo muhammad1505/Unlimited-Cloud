@@ -1,4 +1,50 @@
+import com.android.build.api.artifact.SingleArtifact
+import java.io.File
 import java.util.Properties
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.SetProperty
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+
+/**
+ * Removes permissions from the *merged* manifest.
+ *
+ * `tools:node="remove"` in src/main/AndroidManifest.xml is not enough here:
+ * `android.permission.DUMP` kept reappearing in the packaged APK, which is what
+ * made Play Protect warn about an unnecessary privileged permission. Editing the
+ * merged manifest is the last point before packaging, so nothing can add it back.
+ */
+abstract class StripMergedPermissions : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val mergedManifest: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val strippedManifest: DirectoryProperty
+
+    @get:Input
+    abstract val forbidden: SetProperty<String>
+
+    @TaskAction
+    fun strip() {
+        val source = mergedManifest.get().file("AndroidManifest.xml").asFile
+        var text = source.readText()
+        forbidden.get().forEach { permission ->
+            val element = Regex(
+                "<uses-permission(?:-sdk-\\d+)?\\b[^>]*android:name=\"" +
+                    Regex.escape(permission) + "\"[^>]*/>",
+            )
+            text = element.replace(text, "")
+        }
+        val target = strippedManifest.get().asFile.apply { mkdirs() }
+        File(target, "AndroidManifest.xml").writeText(text)
+    }
+}
 
 plugins {
     alias(libs.plugins.androidApplication)
@@ -103,6 +149,22 @@ android {
         // Compressed natives shrink the download by roughly 60%; the system extracts
         // them at install time. Uncompressed would keep ABI APKs around 43 MB.
         jniLibs.useLegacyPackaging = true
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        val strip = tasks.register<StripMergedPermissions>(
+            "stripMergedPermissions${variant.name.replaceFirstChar { it.uppercaseChar() }}",
+        ) {
+            forbidden.set(setOf("android.permission.DUMP"))
+        }
+        variant.artifacts.use(strip)
+            .wiredWithDirectories(
+                StripMergedPermissions::mergedManifest,
+                StripMergedPermissions::strippedManifest,
+            )
+            .toTransform(SingleArtifact.MERGED_MANIFEST)
     }
 }
 
