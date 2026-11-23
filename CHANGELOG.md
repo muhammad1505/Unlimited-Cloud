@@ -31,6 +31,8 @@ Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 - "Atur ulang riwayat" tidak lagi langsung mengunggah ulang seluruh galeri. Konfirmasi menjelaskan dampaknya, dan foto lama baru diproses saat Anda menekan "Sinkronkan sekarang".
 - Kartu baterai lebih ringkas: status, saran sesuai versi Android, dan pintasan ke pengaturan sistem tersusun dalam satu tempat.
 - Aksi "Muat ulang daftar" di Penyimpanan diberi nama yang jelas agar tidak tertukar dengan sinkronisasi galeri.
+- APK tidak lagi membawa izin foreground service bawaan WorkManager maupun penanda DUMP dari receiver diagnostik/profile installer. Tidak ada izin penyimpanan atau media; galeri tetap memakai SAF. CI kini memeriksa manifest APK jadi, jadi izin penyimpanan tidak bisa muncul tanpa sengaja.
+- Peringatan Play Protect saat memasang APK sideload dijelaskan di README dan docs/PRIVACY.md: itu peringatan aplikasi belum dikenal, bukan permintaan akses penyimpanan.
 
 ## 1.2.6 — 23 November 2026
 

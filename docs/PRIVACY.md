@@ -18,15 +18,22 @@ selain yang dikelola TDLib untuk sesi.
 
 ## Izin Android
 
-Manifest aplikasi mendeklarasikan:
+APK jadi hanya meminta:
 
-- `INTERNET`
-- `ACCESS_NETWORK_STATE`
+- `INTERNET` dan `ACCESS_NETWORK_STATE` untuk TDLib.
+- `WAKE_LOCK` dan `RECEIVE_BOOT_COMPLETED` dari WorkManager, agar jadwal sinkron
+  yang diaktifkan pengguna dapat dilanjutkan setelah perangkat restart.
+- `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, izin signature milik aplikasi
+  sendiri yang menjaga receiver runtime.
 
-WorkManager menambahkan izin normal seperti `WAKE_LOCK` dan
-`RECEIVE_BOOT_COMPLETED` agar jadwal sinkron yang diaktifkan pengguna dapat
-dilanjutkan setelah perangkat restart. Tidak ada izin penyimpanan, kamera, lokasi,
-atau media. Semua akses berkas memakai Storage Access Framework:
+Izin `FOREGROUND_SERVICE` yang biasanya ikut dari WorkManager dihapus lewat
+manifest merger: worker galeri adalah periodic worker biasa, tidak pernah menjadi
+foreground service, dan tidak menampilkan notifikasi. Receiver diagnostik
+WorkManager dan profile installer juga dihapus karena membawa penanda
+`android.permission.DUMP` meskipun tidak meminta izin apa pun.
+
+Tidak ada izin penyimpanan, kamera, lokasi, media, notifikasi, atau aksesibilitas.
+Semua akses berkas memakai Storage Access Framework:
 
 - Unggah: pemilih dokumen (`GetContent`), file disalin ke cache aplikasi agar TDLib
   bisa membacanya.
@@ -40,6 +47,25 @@ atau media. Semua akses berkas memakai Storage Access Framework:
 - Foto yang diunduh dapat disalin ke `Pictures/Unlimited Cloud` melalui MediaStore
   pada Android 10 ke atas. Aplikasi hanya menulis entri miliknya sendiri, jadi
   tidak meminta izin penyimpanan atau media.
+
+## Peringatan Play Protect saat sideload
+
+APK rilis ditandatangani sendiri dan tidak didistribusikan lewat Google Play.
+Play Protect dapat menampilkan "App scan recommended" atau "This app is unknown
+to Play Protect" setiap kali versi baru dipasang. Itu adalah peringatan bahwa
+Google belum mengenal APK tersebut, **bukan** permintaan izin penyimpanan.
+
+Aplikasi tidak mendeklarasikan izin penyimpanan/media apa pun; akses berkas selalu
+lewat SAF. Untuk memverifikasi APK yang diunduh:
+
+```bash
+python3 scripts/check-apk-permissions.py path/ke/unlimited-cloud.apk
+```
+
+Skrip itu membaca manifest APK jadi dan gagal bila menemukan izin penyimpanan,
+media, foreground service, notifikasi, atau penanda `DUMP`. Jika ingin dialog
+Play Protect tidak muncul, distribusikan aplikasi lewat Google Play (termasuk
+jalur internal testing) agar Play Protect dapat memindai dan mengenali paketnya.
 
 ## Optimasi baterai
 

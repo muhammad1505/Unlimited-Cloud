@@ -122,6 +122,10 @@ Penjelasan modul dan alur data: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - FileProvider hanya membuka `cache/shared/`, tempat salinan sementara untuk fitur
   bagikan.
 - Tidak ada backend pihak ketiga; semua trafik menuju Telegram lewat TDLib.
+- APK rilis ditandatangani sendiri. Play Protect dapat menampilkan peringatan
+  "app belum dikenal" saat sideload; itu bukan permintaan izin penyimpanan. APK
+  tidak meminta izin penyimpanan/media sama sekali, dan CI memeriksa manifest APK
+  jadi lewat `scripts/check-apk-permissions.py`.
 
 Rincian: [docs/PRIVACY.md](docs/PRIVACY.md).
 

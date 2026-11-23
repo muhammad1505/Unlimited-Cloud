@@ -1,14 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Only these two are needed. Files are reached through the Storage Access
-         Framework, so no storage permission is declared. A removal marker for
-         android.permission.DUMP used to sit here, and the manifest merger keeps a
-         lone marker as a real declaration, so it put DUMP into the APK. Nothing
-         declares it now; scripts/check-apk-permissions.py reads the permissions
-         the built APK requests and fails if a new one appears. -->
+         Framework, so no storage permission is declared.
+         scripts/check-apk-permissions.py reads the built APK and fails if a
+         storage/media permission or a privileged marker appears, even when a
+         dependency merges it in. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- WorkManager merges this in for foreground/expedited work. Gallery sync is
+         a plain periodic worker: it never calls setForeground and never posts a
+         notification, so the app should not advertise the capability. -->
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE"
+        tools:node="remove" />
 
     <!-- Android 11+ hides other packages from the app. The battery card opens the
          manufacturer's autostart screen by component name, which only resolves for
@@ -43,6 +50,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- WorkManager's diagnostics receiver and profileinstaller's receiver
+             carry android:permission="android.permission.DUMP". They request no
+             permission, but a manifest scanner sees the privileged marker. Neither
+             is needed in a release build: diagnostics are an adb-only tool, and
+             the baseline profile is still installed by ProfileInstaller. -->
+        <receiver
+            android:name="androidx.work.impl.diagnostics.DiagnosticsReceiver"
+            tools:node="remove" />
+        <receiver
+            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+            tools:node="remove" />
 
         <!-- Share sheet: exposes only the copied file in cache/shared, never the
              TDLib database or the rest of app storage. -->

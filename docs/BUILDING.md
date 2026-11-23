@@ -112,6 +112,7 @@ CI menjalankan keduanya plus build release bertanda tangan dan verifikasi
 | Folder galeri tidak menghasilkan foto | izin SAF dicabut atau folder kosong | pilih ulang folder di Pengaturan → Galeri |
 | Sync latar belakang belum jalan | WorkManager menunda sampai jaringan/baterai memenuhi syarat | aktifkan switch-nya di Pengaturan → Galeri, lalu buka aplikasi sekali |
 | FileProvider `IllegalArgumentException` | authority tidak cocok | authority adalah `${applicationId}.fileprovider` |
+| Play Protect "App scan recommended" saat install APK | APK self-signed dan belum dikenal Play Protect | bukan izin penyimpanan; pilih "Install anyway" atau distribusikan lewat Play. Verifikasi dengan `python3 scripts/check-apk-permissions.py <apk>` |
 | CI gagal "version mismatch" | changelog/versi tidak disinkronkan | `python3 scripts/bump-version.py` atau edit entri teratas |
 
 ## Catatan rilis dan ukuran APK

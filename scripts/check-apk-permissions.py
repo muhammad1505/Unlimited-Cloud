@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Assert the packaged APK requests only the permissions the app actually needs.
 
-Play Protect flags privileged or unnecessary permissions, so this reads the
-*built* APK rather than the source manifest and looks only at what the app
-requests: the `uses-permission` and `uses-permission-sdk-23` elements.
+Play Protect flags privileged, unnecessary, or storage permissions, so this
+reads the *built* APK rather than the source manifest. It checks two things:
 
-Scanning the raw manifest bytes for permission names is not good enough: a
-receiver can carry `android:permission="android.permission.DUMP"` to restrict
-who may trigger it (WorkManager's diagnostics receiver and profileinstaller
-both do), which requests nothing yet reads exactly like a privileged request.
+* the permissions the app requests (`uses-permission` / `uses-permission-sdk-23`),
+  against a small allow list; and
+* the manifest string pool, for markers that must never appear even when they
+  are only attributes on a component (for example WorkManager's diagnostics
+  receiver carries `android:permission="android.permission.DUMP"`).
+
+The second check is what keeps storage/media permissions from slipping in
+through a dependency update: this script fails if any of those names appear in
+the packaged manifest at all.
 
 Usage: scripts/check-apk-permissions.py <apk> [...]
 """
@@ -20,21 +24,43 @@ import sys
 import zipfile
 from pathlib import Path
 
-# INTERNET/ACCESS_NETWORK_STATE: TDLib. The rest come from WorkManager's own
-# manifest and are required for the opt-in background gallery sync.
-# DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION is androidx.core's signature
-# permission that guards runtime-registered receivers; it is not a user prompt.
+# INTERNET/ACCESS_NETWORK_STATE: TDLib. WAKE_LOCK and RECEIVE_BOOT_COMPLETED:
+# WorkManager's opt-in periodic gallery sync. BIND_JOB_SERVICE: the signature
+# permission on WorkManager's JobService (not a user prompt).
+# DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION is androidx.core's app-defined
+# signature permission that guards runtime-registered receivers.
+#
+# No storage/media, foreground-service, or notification permission belongs here.
 ALLOWED = {
     "INTERNET",
     "ACCESS_NETWORK_STATE",
     "WAKE_LOCK",
     "RECEIVE_BOOT_COMPLETED",
-    "FOREGROUND_SERVICE",
-    "FOREGROUND_SERVICE_DATA_SYNC",
     "BIND_JOB_SERVICE",
-    "POST_NOTIFICATIONS",
     "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
 }
+
+# Names that must not appear anywhere in the packaged manifest. Prefix matching
+# covers typed variants: READ_MEDIA_* and FOREGROUND_SERVICE_*.
+FORBIDDEN_MARKERS = (
+    "android.permission.MANAGE_EXTERNAL_STORAGE",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.WRITE_EXTERNAL_STORAGE",
+    "android.permission.READ_MEDIA_",
+    "android.permission.ACCESS_MEDIA_LOCATION",
+    "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+    "android.permission.DUMP",
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.POST_NOTIFICATIONS",
+    "android.permission.REQUEST_INSTALL_PACKAGES",
+    "android.permission.SYSTEM_ALERT_WINDOW",
+    "android.permission.QUERY_ALL_PACKAGES",
+    "android.permission.RECEIVE_SMS",
+    "android.permission.SEND_SMS",
+    "android.permission.READ_SMS",
+    "android.permission.BIND_ACCESSIBILITY_SERVICE",
+    "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
+)
 
 # Chunk types from Android's binary XML format (frameworks/base/libs/androidfw).
 RES_STRING_POOL_TYPE = 0x0001
@@ -87,7 +113,7 @@ def _string_pool(data: bytes, start: int) -> list[str]:
     return strings
 
 
-def apk_permissions(apk: Path) -> set[str]:
+def read_manifest(apk: Path) -> tuple[set[str], list[str]]:
     with zipfile.ZipFile(apk) as archive:
         data = archive.read("AndroidManifest.xml")
 
@@ -123,7 +149,17 @@ def apk_permissions(apk: Path) -> set[str]:
                     cursor += attr_size
         offset += chunk_size
 
-    return permissions
+    return permissions, strings
+
+
+def forbidden_markers(strings: list[str]) -> list[str]:
+    return sorted(
+        {
+            value
+            for value in strings
+            if any(value == marker or value.startswith(marker) for marker in FORBIDDEN_MARKERS)
+        }
+    )
 
 
 def main(paths: list[str]) -> int:
@@ -140,7 +176,7 @@ def main(paths: list[str]) -> int:
             continue
 
         try:
-            permissions = apk_permissions(apk)
+            permissions, strings = read_manifest(apk)
         except (KeyError, ValueError, struct.error) as error:
             print(f"[FAILED] cannot read permissions from {apk.name}: {error}", file=sys.stderr)
             failed = True
@@ -152,6 +188,7 @@ def main(paths: list[str]) -> int:
             continue
 
         unexpected = sorted(permissions - ALLOWED)
+        forbidden = forbidden_markers(strings)
         print(f"{apk.name}: {', '.join(sorted(permissions)) or '(none)'}")
         if unexpected:
             print(
@@ -159,10 +196,16 @@ def main(paths: list[str]) -> int:
                 file=sys.stderr,
             )
             failed = True
+        if forbidden:
+            print(
+                f"  [FAILED] forbidden manifest markers: {', '.join(forbidden)}",
+                file=sys.stderr,
+            )
+            failed = True
 
     if failed:
         return 1
-    print("[PASSED] APK permissions match the allow list")
+    print("[PASSED] APK permissions and manifest markers are clean")
     return 0
 
 

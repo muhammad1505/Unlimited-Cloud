@@ -42,7 +42,13 @@ jobs:
             echo "::error::the app must reach files through SAF, not storage permissions"
             exit 1
           fi
-          echo "no storage permissions declared"
+          # The built APK is checked again in the Android job. These guards keep
+          # the manifest hardening (drop WorkManager's foreground-service
+          # permission and the DUMP-bearing receivers) from being deleted.
+          grep -q 'FOREGROUND_SERVICE' androidApp/src/main/AndroidManifest.xml
+          grep -q 'androidx.work.impl.diagnostics.DiagnosticsReceiver' androidApp/src/main/AndroidManifest.xml
+          grep -q 'androidx.profileinstaller.ProfileInstallReceiver' androidApp/src/main/AndroidManifest.xml
+          echo "no storage permissions declared; manifest hardening present"
 
       - name: Regression guards for recent fixes
         run: |

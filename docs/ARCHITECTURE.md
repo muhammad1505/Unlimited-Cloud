@@ -126,7 +126,8 @@ menjalankan hingga 8 foto per folder (parameter `perFolderLimit`), lalu berhenti
 Sinkronisasi dari layar Pengaturan memakai batas tak terhingga sehingga semua foto
 baru di folder terpilih terunggah dalam satu sesi. Kunci sinkron dicatat per foto,
 jadi sisa batch dilanjutkan pada jadwal berikutnya. Tidak ada layanan latar depan atau
-notifikasi.
+notifikasi; manifest menghapus izin `FOREGROUND_SERVICE` bawaan WorkManager dan
+receiver diagnostik/profile-installer yang membawa penanda `DUMP`.
 
 `MediaSaver` menulis foto unduhan ke MediaStore dengan `IS_PENDING`: entri baru
 tampil di galeri setelah salinan selesai, dan entri dihapus bila penyalinan gagal.
