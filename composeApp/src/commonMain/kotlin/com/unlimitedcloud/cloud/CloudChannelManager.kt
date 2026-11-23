@@ -4,10 +4,14 @@ import com.unlimitedcloud.log.LOG_TAG
 import com.unlimitedcloud.log.logDiagnostic
 import com.unlimitedcloud.settings.AppPreferences
 import com.unlimitedcloud.tdjson.TdJsonSession
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.delay
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -19,31 +23,45 @@ import kotlinx.serialization.json.put
 sealed interface CloudChannelState {
     data object Idle : CloudChannelState
     data object Resolving : CloudChannelState
+
+    /** Old channel messages are being copied into the new forum group. */
+    data class Migrating(val forwarded: Int) : CloudChannelState
     data class Ready(val chatId: Long) : CloudChannelState
     data class Failed(val message: String) : CloudChannelState
 }
 
 /**
- * Resolves (or creates once) the private Telegram channel that backs the file
- * tree.
+ * Resolves (or creates once) the private Telegram forum supergroup that backs
+ * the file tree.
+ *
+ * Telegram has no folders outside a forum, so the storage chat is a supergroup
+ * with topics and every app folder becomes one topic. Builds before 1.3.0 used
+ * a plain broadcast channel, which cannot host topics; such a channel is
+ * adopted as a migration source: its documents are copied into topics of a new
+ * forum group, and the old chat is renamed so it is never picked up again.
  *
  * The chat id is persisted as soon as it is known and validated with `getChat`
  * on every launch. Discovery only falls back to searching when that id is gone
- * (reinstall, channel deleted, account switch), because `searchChats` does not
- * see a channel that TDLib has not loaded on this device yet. Relying on the
- * search alone is what used to create a new channel on every app start.
+ * (reinstall, chat deleted, account switch), because `searchChats` does not see
+ * a chat that TDLib has not loaded on this device yet.
  */
 class CloudChannelManager(
     private val session: TdJsonSession,
     private val preferences: AppPreferences,
 ) {
     companion object {
-        const val ROOT_CHANNEL_TITLE = "UNLIMITED_CLOUD_ROOT_V1"
+        const val ROOT_STORAGE_TITLE = "UNLIMITED_CLOUD_ROOT_V1"
 
-        private const val ROOT_CHANNEL_DESCRIPTION =
-            "Unlimited Cloud storage root (v1). Renaming or deleting this channel orphans uploaded files."
+        private const val LEGACY_TITLE_SUFFIX = " (lama)"
+
+        private const val ROOT_STORAGE_DESCRIPTION =
+            "Unlimited Cloud storage root (v1). Every topic is a folder; renaming or " +
+                "deleting this group orphans uploaded files."
 
         private const val CHAT_SCAN_LIMIT = 100
+
+        /** One migration page; also the maximum `forwardMessages` batch size. */
+        private const val MIGRATION_PAGE = 100
 
         /** `getChat` probes for the stored id before it is declared missing. */
         private const val CHECK_ATTEMPTS = 2
@@ -53,11 +71,13 @@ class CloudChannelManager(
     private val state = MutableStateFlow<CloudChannelState>(CloudChannelState.Idle)
     val channelState: StateFlow<CloudChannelState> = state.asStateFlow()
 
+    private val topics = ForumTopics(session)
     private var cachedChatId: Long? = null
 
-    /** Forgets the channel of the previous account after a logout. */
+    /** Forgets the storage chat of the previous account after a logout. */
     fun forget() {
         cachedChatId = null
+        topics.forget()
         state.value = CloudChannelState.Idle
     }
 
@@ -67,35 +87,37 @@ class CloudChannelManager(
         state.value = CloudChannelState.Resolving
 
         // While the session is still opening or its chat list is loading, TDLib
-        // answers requests with a temporary error. Treating that as "the channel
-        // is gone" cleared the stored id, and the explorer stayed empty until the
-        // channel happened to be found again. A definitive answer is retried once
+        // answers requests with a temporary error. Treating that as "the chat is
+        // gone" cleared the stored id, and the explorer stayed empty until the
+        // chat happened to be found again. A definitive answer is retried once
         // and the stored id only goes away when the chat really is missing.
         var savedState = Check.Missing
         val saved = preferences.cloudRootChatId()
         if (saved != null) {
-            for (attempt in 0 until CHECK_ATTEMPTS) {
-                savedState = checkRootChannel(saved)
-                if (savedState != Check.Unknown) break
-                delay(CHECK_DELAY_MILLIS * (attempt + 1))
-            }
+            savedState = checkWithRetries(saved)
             if (savedState == Check.Valid) return ready(saved)
+            // A pre-1.3.0 channel still owns every file, so it is moved instead
+            // of being replaced by an empty group.
+            if (savedState == Check.Legacy) return migrate(saved)
         }
 
-        val found = runCatching { findExistingChannel() }.getOrElse { failure ->
-            state.value = CloudChannelState.Failed(failure.message ?: "gagal menyiapkan channel")
+        val found = runCatching { findExistingChat() }.getOrElse { failure ->
+            state.value = CloudChannelState.Failed(failure.message ?: "gagal menyiapkan penyimpanan")
             return null
         }
         if (found != null) {
-            preferences.setCloudRootChatId(found)
-            return ready(found)
+            if (found.isForum) {
+                preferences.setCloudRootChatId(found.chatId)
+                return ready(found.chatId)
+            }
+            return migrate(found.chatId)
         }
 
         if (saved != null && savedState == Check.Unknown) {
-            // Neither the stored id nor the search answered; creating a channel
+            // Neither the stored id nor the search answered; creating a group
             // here would orphan every file already uploaded, so keep the id and
             // let the next refresh try again.
-            state.value = CloudChannelState.Failed("Channel penyimpanan belum siap")
+            state.value = CloudChannelState.Failed("Penyimpanan belum siap")
             return null
         }
 
@@ -105,12 +127,13 @@ class CloudChannelManager(
             preferences.setCloudRootChatId(null)
         }
 
-        val created = runCatching { createChannel() }.getOrElse { failure ->
-            state.value = CloudChannelState.Failed(failure.message ?: "gagal membuat channel")
+        val created = runCatching { createForumGroup() }.getOrElse { failure ->
+            state.value = CloudChannelState.Failed(failure.message ?: "gagal membuat grup topik")
             return null
         }
         if (created == null) {
-            state.value = CloudChannelState.Failed("channel $ROOT_CHANNEL_TITLE tidak dapat dibuat")
+            state.value =
+                CloudChannelState.Failed("grup $ROOT_STORAGE_TITLE tidak dapat dibuat")
             return null
         }
 
@@ -118,22 +141,35 @@ class CloudChannelManager(
         return ready(created)
     }
 
-    private enum class Check { Valid, Missing, Unknown }
+    private enum class Check { Valid, Legacy, Missing, Unknown }
+
+    private data class StorageChat(val chatId: Long, val isForum: Boolean)
 
     private fun ready(chatId: Long): Long {
         cachedChatId = chatId
         if (state.value != CloudChannelState.Ready(chatId)) {
-            logDiagnostic(LOG_TAG, "channel penyimpanan siap: $chatId")
+            logDiagnostic(LOG_TAG, "penyimpanan siap: $chatId")
         }
         state.value = CloudChannelState.Ready(chatId)
         return chatId
     }
 
+    private suspend fun checkWithRetries(chatId: Long): Check {
+        var result = Check.Missing
+        for (attempt in 0 until CHECK_ATTEMPTS) {
+            result = checkChat(chatId)
+            if (result != Check.Unknown) return result
+            delay(CHECK_DELAY_MILLIS * (attempt + 1))
+        }
+        return result
+    }
+
     /**
-     * Whether [chatId] is still the channel this app owns. Errors that do not say
-     * the chat is missing are reported as [Check.Unknown], never as "gone".
+     * Whether [chatId] is the storage chat this app owns. A chat with the right
+     * title that cannot host topics is reported as [Check.Legacy] so it can be
+     * migrated; errors that do not say the chat is missing stay [Check.Unknown].
      */
-    private suspend fun checkRootChannel(chatId: Long): Check {
+    private suspend fun checkChat(chatId: Long): Check {
         val chat = runCatching {
             session.call(
                 buildJsonObject {
@@ -143,28 +179,50 @@ class CloudChannelManager(
             )
         }.getOrElse { return Check.Unknown }
 
-        if (chat["@type"]?.jsonPrimitive?.contentOrNull == "error") {
+        if (chat.isError()) {
             val message = chat["message"]?.jsonPrimitive?.contentOrNull.orEmpty()
-            return if (message.contains("not found", ignoreCase = true)) Check.Missing else Check.Unknown
+            return if (message.contains("not found", ignoreCase = true)) {
+                Check.Missing
+            } else {
+                Check.Unknown
+            }
         }
 
-        return if (chat["title"]?.jsonPrimitive?.contentOrNull == ROOT_CHANNEL_TITLE) {
+        if (chat["title"]?.jsonPrimitive?.contentOrNull != ROOT_STORAGE_TITLE) {
+            return Check.Missing
+        }
+
+        val type = chat["type"]?.jsonObject
+        if (type?.get("@type")?.jsonPrimitive?.contentOrNull != "chatTypeSupergroup") {
+            return Check.Missing
+        }
+        val supergroupId = type["supergroup_id"]?.jsonPrimitive?.longOrNull ?: return Check.Missing
+
+        val supergroup = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "getSupergroup")
+                    put("supergroup_id", supergroupId)
+                },
+            )
+        }.getOrElse { return Check.Unknown }
+
+        if (supergroup.isError()) return Check.Unknown
+
+        return if (supergroup["is_forum"]?.jsonPrimitive?.booleanOrNull == true) {
             Check.Valid
         } else {
-            Check.Missing
+            Check.Legacy
         }
     }
 
-    private suspend fun findExistingChannel(): Long? {
-        // Server-side search covers channels that are not loaded locally yet.
+    private suspend fun findExistingChat(): StorageChat? {
+        // Server-side search covers chats that are not loaded locally yet.
         val serverIds = searchChatIds("searchChatsOnServer")
             .ifEmpty { searchChatIds("searchChats") }
-        serverIds.forEach { chatId ->
-            if (checkRootChannel(chatId) == Check.Valid) return chatId
-        }
 
-        // Last resort: walk the loaded chat list. `loadChats` only fills the local
-        // cache and returns 404 once everything is already there, which is fine.
+        // `loadChats` only fills the local cache and returns 404 once everything
+        // is already there, which is fine.
         runCatching {
             session.call(
                 buildJsonObject {
@@ -188,34 +246,226 @@ class CloudChannelManager(
             },
         )["chat_ids"]?.jsonArray?.mapNotNull { it.jsonPrimitive.longOrNull }.orEmpty()
 
-        knownIds.forEach { chatId ->
-            if (checkRootChannel(chatId) == Check.Valid) return chatId
+        var legacy: Long? = null
+        (serverIds + knownIds).distinct().forEach { chatId ->
+            when (checkChat(chatId)) {
+                Check.Valid -> return StorageChat(chatId, isForum = true)
+                Check.Legacy -> if (legacy == null) legacy = chatId
+                else -> Unit
+            }
         }
-        return null
+        return legacy?.let { StorageChat(it, isForum = false) }
     }
 
     private suspend fun searchChatIds(type: String): List<Long> = runCatching {
         session.call(
             buildJsonObject {
                 put("@type", type)
-                put("query", ROOT_CHANNEL_TITLE)
+                put("query", ROOT_STORAGE_TITLE)
                 put("limit", 20)
             },
         )["chat_ids"]?.jsonArray?.mapNotNull { it.jsonPrimitive.longOrNull }.orEmpty()
     }.getOrDefault(emptyList())
 
-    private suspend fun createChannel(): Long? {
+    private suspend fun createForumGroup(): Long? {
         val response = session.call(
             buildJsonObject {
                 put("@type", "createNewSupergroupChat")
-                put("title", ROOT_CHANNEL_TITLE)
-                put("is_forum", false)
-                put("is_channel", true)
-                put("description", ROOT_CHANNEL_DESCRIPTION)
+                put("title", ROOT_STORAGE_TITLE)
+                put("is_forum", true)
+                put("is_channel", false)
+                put("description", ROOT_STORAGE_DESCRIPTION)
             },
         )
-        val chatId = response.jsonObject["id"]?.jsonPrimitive?.longOrNull
-        if (chatId != null) logDiagnostic(LOG_TAG, "channel penyimpanan dibuat: $chatId")
+        if (response.isError()) {
+            logDiagnostic(
+                LOG_TAG,
+                "grup topik ditolak TDLib: ${response["message"]?.jsonPrimitive?.contentOrNull}",
+            )
+            return null
+        }
+        val chatId = response["id"]?.jsonPrimitive?.longOrNull
+        if (chatId != null) logDiagnostic(LOG_TAG, "grup topik dibuat: $chatId")
         return chatId
     }
+
+    /**
+     * Copies every document of the pre-forum channel into a topic of the new
+     * forum group. The cursor is stored after each page, so an interrupted
+     * migration resumes instead of duplicating what was already copied.
+     */
+    private suspend fun migrate(legacyChatId: Long): Long? {
+        val target = preferences.migrationTargetChatId()
+            ?: createMigrationTarget(legacyChatId)
+            ?: return null
+
+        logDiagnostic(LOG_TAG, "memindahkan berkas $legacyChatId → $target")
+
+        // Without opening the old chat only its locally cached messages come
+        // back, which would silently leave most files behind.
+        runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "openChat")
+                    put("chat_id", legacyChatId)
+                },
+            )
+        }
+
+        var cursor = preferences.migrationCursor()
+        var forwarded = 0
+        state.value = CloudChannelState.Migrating(forwarded)
+
+        while (true) {
+            val response = runCatching {
+                session.call(
+                    buildJsonObject {
+                        put("@type", "getChatHistory")
+                        put("chat_id", legacyChatId)
+                        put("from_message_id", cursor)
+                        put("offset", 0)
+                        put("limit", MIGRATION_PAGE)
+                        put("only_local", false)
+                    },
+                )
+            }.getOrElse { failure ->
+                state.value = CloudChannelState.Failed(
+                    "Migrasi ke grup topik terhenti: ${failure.message}",
+                )
+                return null
+            }
+
+            if (response.isError()) {
+                state.value = CloudChannelState.Failed(
+                    "Migrasi ke grup topik terhenti: " +
+                        response["message"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                )
+                return null
+            }
+
+            val messages = response["messages"]?.jsonArray.orEmpty()
+            if (messages.isEmpty()) break
+
+            val lastId = messages.lastOrNull()?.jsonObject
+                ?.get("id")?.jsonPrimitive?.longOrNull ?: break
+            if (lastId == 0L || lastId == cursor) break
+
+            val byFolder = linkedMapOf<String?, MutableList<Long>>()
+            messages.forEach { element ->
+                val message = element.jsonObject
+                val content = message["content"]?.jsonObject ?: return@forEach
+                if (content["@type"]?.jsonPrimitive?.contentOrNull != "messageDocument") {
+                    return@forEach
+                }
+                val id = message["id"]?.jsonPrimitive?.longOrNull ?: return@forEach
+                val folder = content["caption"]
+                    ?.jsonObject
+                    ?.get("text")
+                    ?.jsonPrimitive
+                    ?.contentOrNull
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                byFolder.getOrPut(folder) { mutableListOf() }.add(id)
+            }
+
+            for ((folder, ids) in byFolder) {
+                val topicId = folder?.let { topics.resolve(target, it) }
+                if (!copyMessages(legacyChatId, target, topicId, ids)) {
+                    state.value = CloudChannelState.Failed(
+                        "Migrasi ke grup topik gagal saat menyalin berkas",
+                    )
+                    return null
+                }
+                forwarded += ids.size
+                state.value = CloudChannelState.Migrating(forwarded)
+            }
+
+            cursor = lastId
+            preferences.setMigrationCursor(cursor)
+        }
+
+        preferences.setCloudRootChatId(target)
+        preferences.setMigrationSourceChatId(null)
+        preferences.setMigrationTargetChatId(null)
+        preferences.setMigrationCursor(0L)
+
+        // The renamed chat keeps its files, but it can no longer be mistaken for
+        // the storage chat, and the user can delete it once the group looks right.
+        runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "setChatTitle")
+                    put("chat_id", legacyChatId)
+                    put("title", ROOT_STORAGE_TITLE + LEGACY_TITLE_SUFFIX)
+                },
+            )
+        }
+
+        logDiagnostic(LOG_TAG, "migrasi selesai: $forwarded berkas dipindahkan ke $target")
+        return ready(target)
+    }
+
+    /** Creates the forum group that receives the legacy channel's files. */
+    private suspend fun createMigrationTarget(legacyChatId: Long): Long? {
+        state.value = CloudChannelState.Migrating(0)
+        val created = runCatching { createForumGroup() }.getOrElse { failure ->
+            state.value = CloudChannelState.Failed(
+                failure.message ?: "gagal membuat grup topik",
+            )
+            return null
+        }
+        if (created == null) {
+            state.value =
+                CloudChannelState.Failed("grup $ROOT_STORAGE_TITLE tidak dapat dibuat")
+            return null
+        }
+        preferences.setMigrationSourceChatId(legacyChatId)
+        preferences.setMigrationTargetChatId(created)
+        preferences.setMigrationCursor(0L)
+        return created
+    }
+
+    /**
+     * Copies messages with `send_copy` so the new group owns them: a plain
+     * forward keeps pointing at the old channel, which breaks the files if that
+     * chat is deleted later.
+     */
+    private suspend fun copyMessages(
+        fromChatId: Long,
+        toChatId: Long,
+        topicId: Int?,
+        messageIds: List<Long>,
+    ): Boolean {
+        val response = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "forwardMessages")
+                    put("chat_id", toChatId)
+                    put("topic_id", forumTopicJson(topicId))
+                    put("from_chat_id", fromChatId)
+                    put(
+                        "message_ids",
+                        buildJsonArray { messageIds.forEach { add(JsonPrimitive(it)) } },
+                    )
+                    put("send_copy", true)
+                    put("remove_caption", false)
+                },
+            )
+        }.getOrElse { failure ->
+            logDiagnostic(LOG_TAG, "salin berkas gagal: ${failure.message}")
+            return false
+        }
+
+        if (response.isError()) {
+            logDiagnostic(
+                LOG_TAG,
+                "salin berkas ditolak TDLib: ${response["message"]?.jsonPrimitive?.contentOrNull}",
+            )
+            return false
+        }
+        return true
+    }
+
+    private fun JsonObject.isError(): Boolean =
+        this["@type"]?.jsonPrimitive?.contentOrNull == "error"
 }

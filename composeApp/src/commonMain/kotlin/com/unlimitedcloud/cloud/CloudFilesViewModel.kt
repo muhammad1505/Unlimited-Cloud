@@ -152,7 +152,7 @@ class CloudFilesViewModel(
 
             val chatId = ensureChannelWithRetry()
             if (chatId == null) {
-                state.update { it.copy(loading = false, error = "Channel penyimpanan belum siap") }
+                state.update { it.copy(loading = false, error = "Penyimpanan belum siap") }
                 return@launch
             }
 
@@ -232,7 +232,7 @@ class CloudFilesViewModel(
 
             val chatId = channelManager.ensureRootChannel()
             if (chatId == null) {
-                state.update { it.copy(loadingMore = false, error = "Channel penyimpanan belum siap") }
+                state.update { it.copy(loadingMore = false, error = "Penyimpanan belum siap") }
                 return@launch
             }
 
@@ -313,7 +313,7 @@ class CloudFilesViewModel(
         scope.launch {
             val chatId = channelManager.ensureRootChannel()
             if (chatId == null) {
-                failTransfer(id, "Channel penyimpanan belum siap")
+                failTransfer(id, "Penyimpanan belum siap")
                 return@launch
             }
 
@@ -353,7 +353,7 @@ class CloudFilesViewModel(
         scope.launch {
             val chatId = channelManager.ensureRootChannel()
             if (chatId == null) {
-                reportError("Channel penyimpanan belum siap")
+                reportError("Penyimpanan belum siap")
                 return@launch
             }
 
@@ -564,7 +564,7 @@ class CloudFilesViewModel(
 
             val chatId = channelManager.ensureRootChannel()
             if (chatId == null) {
-                state.update { it.copy(error = "Channel penyimpanan belum siap") }
+                state.update { it.copy(error = "Penyimpanan belum siap") }
                 return@launch
             }
 
@@ -797,7 +797,7 @@ class CloudFilesViewModel(
             val chatId = channelManager.ensureRootChannel()
             if (chatId == null) {
                 state.update {
-                    it.copy(gallerySyncing = false, error = "Channel penyimpanan belum siap")
+                    it.copy(gallerySyncing = false, error = "Penyimpanan belum siap")
                 }
                 return@launch
             }

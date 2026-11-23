@@ -290,7 +290,7 @@ private fun StorageCard(
         Spacer(Modifier.height(4.dp))
         InfoRow(
             icon = AppIcons.Cloud,
-            title = "Channel penyimpanan",
+            title = "Penyimpanan",
             value = channelLabel(channelState),
             tint = Color(0xFF10B981),
         )
@@ -783,7 +783,9 @@ private fun batteryGuidance(snapshot: BatteryOptimizationSnapshot): String {
 
 private fun channelLabel(state: CloudChannelState): String = when (state) {
     CloudChannelState.Idle -> "Belum disiapkan"
-    CloudChannelState.Resolving -> "Menyiapkan channel…"
+    CloudChannelState.Resolving -> "Menyiapkan penyimpanan…"
+    is CloudChannelState.Migrating ->
+        "Memindahkan berkas ke grup topik… ${state.forwarded} berkas"
     is CloudChannelState.Ready -> "Siap · chat ${state.chatId}"
     is CloudChannelState.Failed -> state.message
 }

@@ -304,6 +304,7 @@ private fun ChannelPill(state: CloudChannelState, compact: Boolean) {
     val (label, color) = when (state) {
         CloudChannelState.Idle -> "Menunggu" to Color(0xFFF59E0B)
         CloudChannelState.Resolving -> "Menyiapkan" to Color(0xFFF59E0B)
+        is CloudChannelState.Migrating -> "Memindahkan" to Color(0xFFF59E0B)
         is CloudChannelState.Ready -> "Siap" to Color(0xFF10B981)
         is CloudChannelState.Failed -> "Gagal" to MaterialTheme.colorScheme.error
     }

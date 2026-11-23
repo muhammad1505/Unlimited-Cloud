@@ -38,12 +38,17 @@ data class CloudPage(
 )
 
 /**
- * Reads and writes files inside the root channel using plain TDLib requests.
+ * Reads and writes files inside the root forum supergroup using plain TDLib
+ * requests.
  *
- * Every upload is a document message whose caption names a folder, so the
- * channel doubles as both the file index and the directory structure.
+ * Every upload is a document message sent into the topic of its folder, so
+ * Telegram shows the same structure the app does; the caption still carries the
+ * folder name so a message moved to General keeps its folder.
  */
 class CloudFileRepository(private val session: TdJsonSession) {
+
+    private val topics = ForumTopics(session)
+
 
     suspend fun listFiles(
         chatId: Long,
@@ -114,10 +119,14 @@ class CloudFileRepository(private val session: TdJsonSession) {
         thumbnail: UploadThumbnail? = null,
         onProgress: (Float?) -> Unit = {},
     ) {
+        // General (no folder) needs no topic. A folder whose topic cannot be
+        // created still gets uploaded, it just lands in General.
+        val topicId = folder?.let { topics.resolve(chatId, it) }
         val response = session.call(
             buildJsonObject {
                 put("@type", "sendMessage")
                 put("chat_id", chatId)
+                put("topic_id", forumTopicJson(topicId))
                 put(
                     "input_message_content",
                     buildJsonObject {
