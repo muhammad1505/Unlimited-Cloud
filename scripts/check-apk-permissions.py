@@ -22,6 +22,8 @@ from pathlib import Path
 
 # INTERNET/ACCESS_NETWORK_STATE: TDLib. The rest come from WorkManager's own
 # manifest and are required for the opt-in background gallery sync.
+# DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION is androidx.core's signature
+# permission that guards runtime-registered receivers; it is not a user prompt.
 ALLOWED = {
     "INTERNET",
     "ACCESS_NETWORK_STATE",
@@ -31,6 +33,7 @@ ALLOWED = {
     "FOREGROUND_SERVICE_DATA_SYNC",
     "BIND_JOB_SERVICE",
     "POST_NOTIFICATIONS",
+    "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
 }
 
 # Chunk types from Android's binary XML format (frameworks/base/libs/androidfw).
