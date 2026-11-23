@@ -107,8 +107,8 @@ android {
 }
 
 // Permissions are checked against the built APK by
-// scripts/check-apk-permissions.py in CI, so a dependency that starts declaring
-// android.permission.DUMP fails the release build instead of reaching Play.
+// scripts/check-apk-permissions.py in CI, so a dependency that starts requesting
+// a new permission fails the release build instead of reaching Play.
 
 dependencies {
     implementation(project(":composeApp"))

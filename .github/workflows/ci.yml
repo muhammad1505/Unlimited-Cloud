@@ -146,24 +146,15 @@ jobs:
             "$APKSIGNER" verify --print-certs "$apk"
           done
 
-      # The merger kept a lone tools:node="remove" marker as a real declaration,
-      # so DUMP reached the APK while the source manifest looked clean. This reads
-      # the packaged manifest, which is what Play sees.
+      # Reads the packaged manifest, which is what Play sees, and compares the
+      # permissions the app requests against the allow list.
       - name: Check APK permissions
         run: |
           if ! python3 scripts/check-apk-permissions.py androidApp/build/outputs/apk/release/*.apk; then
             echo "--- manifest merger report ---"
             report=$(find androidApp/build -name '*manifest-merger*report*.txt' | head -1)
             echo "report: ${report:-<none>}"
-            [ -n "$report" ] && grep -B3 -A6 -i "dump" "$report" | head -50
-            echo "--- merged manifests mentioning DUMP ---"
-            grep -rl -a --include=AndroidManifest.xml 'android.permission.DUMP' androidApp/build || true
-            echo "--- dependencies declaring DUMP ---"
-            for lib in $(find "$GRADLE_USER_HOME/caches/modules-2/files-2.1" -name '*.aar'); do
-              unzip -p "$lib" AndroidManifest.xml 2>/dev/null | grep -qa 'android.permission.DUMP' && echo "lib: $lib"
-            done || true
-            echo "--- packaged manifest around DUMP ---"
-            python3 scripts/apk-permission-context.py androidApp/build/outputs/apk/release/*.apk
+            [ -n "$report" ] && grep -B3 -A6 -i "permission" "$report" | head -60
             exit 1
           fi
 

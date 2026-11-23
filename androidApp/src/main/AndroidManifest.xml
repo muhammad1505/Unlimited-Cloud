@@ -2,11 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Only these two are needed. Files are reached through the Storage Access
-         Framework, so no storage permission is declared. A `tools:node="remove"`
-         marker for android.permission.DUMP used to sit here; the manifest merger
-         keeps a lone removal marker as a real declaration, which put DUMP into the
-         APK. Nothing declares it anymore, so no marker is needed and
-         scripts/check-apk-permissions.py fails the build if one comes back. -->
+         Framework, so no storage permission is declared. A removal marker for
+         android.permission.DUMP used to sit here, and the manifest merger keeps a
+         lone marker as a real declaration, so it put DUMP into the APK. Nothing
+         declares it now; scripts/check-apk-permissions.py reads the permissions
+         the built APK requests and fails if a new one appears. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
