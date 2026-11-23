@@ -30,8 +30,9 @@ fun FileCover(
     loadCover: suspend (CloudFile) -> String?,
     modifier: Modifier = Modifier,
     size: Dp = 44.dp,
+    revision: Int = 0,
 ) {
-    val path by produceState<String?>(initialValue = null, key1 = file.messageId) {
+    val path by produceState<String?>(initialValue = null, key1 = file.messageId, key2 = revision) {
         value = loadCover(file)
     }
     val image by produceState<ImageBitmap?>(initialValue = null, key1 = path) {

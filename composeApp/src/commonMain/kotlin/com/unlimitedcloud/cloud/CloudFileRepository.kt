@@ -225,6 +225,25 @@ class CloudFileRepository(private val session: TdJsonSession) {
         download(fileId, priority = 32)
     }
 
+    /**
+     * Returns the local path of a file only when TDLib already finished
+     * downloading it. Used for covers of older files, which must not trigger a
+     * full download just to draw a thumbnail.
+     */
+    suspend fun cachedFilePath(fileId: Int): String? {
+        val file = session.call(
+            buildJsonObject {
+                put("@type", "getFile")
+                put("file_id", fileId)
+            },
+        )
+        requireOk(file)
+        val local = file["local"]?.jsonObject ?: return null
+        val completed = local["is_downloading_completed"]?.jsonPrimitive?.booleanOrNull == true
+        val path = local["path"]?.jsonPrimitive?.contentOrNull
+        return if (completed && !path.isNullOrBlank()) path else null
+    }
+
     suspend fun deleteMessages(chatId: Long, messageIds: List<Long>) {
         if (messageIds.isEmpty()) return
 

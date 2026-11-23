@@ -319,6 +319,7 @@ fun FilesScreen(
                     onShare = shareFile,
                     onPreview = openPreview,
                     loadCover = { file -> viewModel.cover(file) },
+                    coverRevision = state.coverRevision,
                 )
 
                 else -> FileList(
@@ -332,6 +333,7 @@ fun FilesScreen(
                     onShare = shareFile,
                     onPreview = openPreview,
                     loadCover = { file -> viewModel.cover(file) },
+                    coverRevision = state.coverRevision,
                 )
             }
         }
@@ -499,6 +501,7 @@ private fun FileList(
     onShare: (CloudFile) -> Unit,
     onPreview: (CloudFile) -> Unit,
     loadCover: suspend (CloudFile) -> String?,
+    coverRevision: Int,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -515,6 +518,7 @@ private fun FileList(
                 onShare = { onShare(file) },
                 onPreview = { onPreview(file) },
                 loadCover = loadCover,
+                coverRevision = coverRevision,
             )
         }
 
@@ -541,6 +545,7 @@ private fun FileGrid(
     onShare: (CloudFile) -> Unit,
     onPreview: (CloudFile) -> Unit,
     loadCover: suspend (CloudFile) -> String?,
+    coverRevision: Int,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 300.dp),
@@ -559,6 +564,7 @@ private fun FileGrid(
                 onShare = { onShare(file) },
                 onPreview = { onPreview(file) },
                 loadCover = loadCover,
+                coverRevision = coverRevision,
             )
         }
 
@@ -583,6 +589,7 @@ private fun FileCard(
     onShare: () -> Unit,
     onPreview: () -> Unit,
     loadCover: suspend (CloudFile) -> String?,
+    coverRevision: Int,
 ) {
     val meta = listOfNotNull(
         file.folder?.let { "Folder $it" },
@@ -604,7 +611,12 @@ private fun FileCard(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    FileCover(file = file, loadCover = loadCover, size = 48.dp)
+                    FileCover(
+                        file = file,
+                        loadCover = loadCover,
+                        size = 48.dp,
+                        revision = coverRevision,
+                    )
                     Spacer(Modifier.weight(1f))
                     if (transfer != null) {
                         Text(
@@ -655,7 +667,7 @@ private fun FileCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                FileCover(file = file, loadCover = loadCover)
+                FileCover(file = file, loadCover = loadCover, revision = coverRevision)
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(

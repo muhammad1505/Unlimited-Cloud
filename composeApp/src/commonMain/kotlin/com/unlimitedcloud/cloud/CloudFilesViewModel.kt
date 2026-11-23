@@ -11,14 +11,19 @@ import com.unlimitedcloud.platform.MediaSaver
 import com.unlimitedcloud.platform.createUploadThumbnail
 import com.unlimitedcloud.settings.AppPreferences
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+
+/** Full history loaded in one refresh, plus the cursor left for more. */
+private data class LoadedFiles(val files: List<CloudFile>, val nextFromMessageId: Long?)
 
 enum class FileSort(val label: String) {
     Newest("Terbaru"),
@@ -72,6 +77,8 @@ data class ExplorerUiState(
     val gallerySyncedCount: Int = 0,
     val autoSaveSupported: Boolean = false,
     val autoSavePhotos: Boolean = false,
+    /** Bumped when a cover becomes available so cards retry their thumbnail. */
+    val coverRevision: Int = 0,
 ) {
     val visibleFiles: List<CloudFile>
         get() {
@@ -145,8 +152,25 @@ class CloudFilesViewModel(
                 return@launch
             }
 
-            runCatching { loadPage(chatId) }
-                .onSuccess { page -> state.update { it.replaceWith(page) } }
+            // Every page is loaded here: leaving the list at the first page made
+            // Settings report the channel's real count while the explorer stopped
+            // at 50 files. MAX_AUTO_PAGES still bounds a very large channel.
+            runCatching { loadAllPages(chatId) }
+                .onSuccess { loaded ->
+                    state.update { previous ->
+                        val folders = loaded.files.mapNotNull { it.folder }.distinct().sorted()
+                        previous.copy(
+                            files = loaded.files,
+                            folders = folders,
+                            selectedFolder = previous.selectedFolder?.takeIf { it in folders },
+                            loading = false,
+                            loadingMore = false,
+                            canLoadMore = loaded.nextFromMessageId != null,
+                            nextFromMessageId = loaded.nextFromMessageId,
+                            error = null,
+                        )
+                    }
+                }
                 .onFailure { failure ->
                     state.update {
                         it.copy(loading = false, error = failure.message ?: "Gagal memuat daftar berkas")
@@ -337,8 +361,10 @@ class CloudFilesViewModel(
      * share action, which needs TDLib's local copy before it can build an
      * `ACTION_SEND` intent.
      */
-    private val coverCache = mutableMapOf<Int, String>()
-    private val missingCovers = mutableSetOf<Int>()
+    private val thumbnailCache = mutableMapOf<Int, String>()
+    private val missingThumbnails = mutableSetOf<Int>()
+    private val coverPaths = mutableMapOf<Long, String>()
+    private val missingCoverFiles = mutableSetOf<Long>()
     private val coverMutex = Mutex()
 
     fun download(file: CloudFile, onDownloaded: (String) -> Unit = {}) {
@@ -408,13 +434,19 @@ class CloudFilesViewModel(
      */
     fun preview(
         file: CloudFile,
+        onProgress: (Float?) -> Unit = {},
         onLoaded: (String) -> Unit,
         onFailed: (String) -> Unit = {},
     ) {
         logDiagnostic(LOG_TAG, "pratinjau mulai: ${file.name} (file ${file.fileId})")
         scope.launch {
-            runCatching { repository.download(file.fileId) }
-                .onSuccess(onLoaded)
+            runCatching { repository.download(file.fileId, onProgress = onProgress) }
+                .onSuccess { path ->
+                    // The dialog shows the cover right away for older files that had
+                    // no thumbnail until this preview cached the full image.
+                    rememberCover(file, path)
+                    onLoaded(path)
+                }
                 .onFailure { failure ->
                     logDiagnostic(LOG_TAG, "pratinjau gagal: ${file.name}: ${failure.message}")
                     onFailed(failure.message ?: "Gagal memuat pratinjau")
@@ -423,27 +455,57 @@ class CloudFilesViewModel(
     }
 
     /**
-     * Resolves the small cover image TDLib keeps next to a document so the list
-     * shows a thumbnail instead of a generic icon. Results (including misses)
-     * are memoised; nothing leaves TDLib's cache. A file without a thumbnail
-     * falls back to the type icon without retrying on every scroll.
+     * Resolves a cover for the file card. New uploads carry TDLib's own preview;
+     * older files fall back to a cover generated from the full file when it is
+     * already downloaded, so nothing extra is fetched. Misses are memoised so a
+     * list without covers does not retry on every scroll.
      */
-    suspend fun cover(file: CloudFile): String? {
-        val id = file.thumbnailId ?: return null
-        return coverMutex.withLock {
-            if (id in missingCovers) {
-                null
-            } else {
-                coverCache[id] ?: runCatching { repository.localThumbnail(id) }
-                    .getOrNull()
-                    ?.also { coverCache[id] = it }
-                    ?: run {
-                        missingCovers += id
-                        null
-                    }
-            }
+    suspend fun cover(file: CloudFile): String? = coverMutex.withLock {
+        coverPaths[file.messageId]?.let { return@withLock it }
+        if (file.messageId in missingCoverFiles) return@withLock null
+
+        val path = resolveThumbnail(file) ?: resolveCachedImage(file)
+        if (path == null) {
+            missingCoverFiles += file.messageId
+            null
+        } else {
+            coverPaths[file.messageId] = path
+            path
         }
     }
+
+    /** Generates and caches a cover from a file the user just previewed or downloaded. */
+    fun rememberCover(file: CloudFile, localPath: String) {
+        scope.launch {
+            val path = withContext(Dispatchers.Default) {
+                createUploadThumbnail(localPath)?.path
+            } ?: return@launch
+            coverMutex.withLock {
+                coverPaths[file.messageId] = path
+                missingCoverFiles -= file.messageId
+            }
+            state.update { it.copy(coverRevision = it.coverRevision + 1) }
+        }
+    }
+
+    private suspend fun resolveThumbnail(file: CloudFile): String? {
+        val id = file.thumbnailId ?: return null
+        thumbnailCache[id]?.let { return it }
+        if (id in missingThumbnails) return null
+        val path = runCatching { repository.localThumbnail(id) }.getOrNull()
+        if (path == null) {
+            missingThumbnails += id
+        } else {
+            thumbnailCache[id] = path
+        }
+        return path
+    }
+
+    private suspend fun resolveCachedImage(file: CloudFile): String? = runCatching {
+        repository.cachedFilePath(file.fileId)?.let { cachedPath ->
+            withContext(Dispatchers.Default) { createUploadThumbnail(cachedPath)?.path }
+        }
+    }.getOrNull()
 
     fun delete(file: CloudFile) {
         scope.launch {
@@ -695,7 +757,7 @@ class CloudFilesViewModel(
     ): Result<Unit> = runCatching {
         // Images carry a small generated preview so the channel message (and the
         // file card) has a cover from the first upload onwards.
-        val thumbnail = createUploadThumbnail(localPath)
+        val thumbnail = withContext(Dispatchers.Default) { createUploadThumbnail(localPath) }
         repository.upload(chatId, localPath, folder, thumbnail) { progress ->
             updateTransfer(transferId) { it.copy(progress = progress) }
         }
@@ -737,18 +799,31 @@ class CloudFilesViewModel(
         state.update { it.copy(status = null, error = message) }
     }
 
-    private fun ExplorerUiState.replaceWith(page: CloudPage): ExplorerUiState {
-        val folders = page.files.mapNotNull { it.folder }.distinct().sorted()
-        return copy(
-            files = page.files,
-            folders = folders,
-            selectedFolder = selectedFolder?.takeIf { it in folders },
-            loading = false,
-            loadingMore = false,
-            canLoadMore = page.nextFromMessageId != null,
-            nextFromMessageId = page.nextFromMessageId,
-            error = null,
-        )
+    /** Loads pages until the history ends, deduplicating the page boundary. */
+    private suspend fun loadAllPages(chatId: Long): LoadedFiles {
+        val files = mutableListOf<CloudFile>()
+        val seen = mutableSetOf<Long>()
+        var cursor = 0L
+        var nextCursor: Long? = null
+        var pages = 0
+
+        while (pages < MAX_AUTO_PAGES) {
+            val page = loadPage(chatId, cursor)
+            page.files.forEach { file ->
+                if (seen.add(file.messageId)) files += file
+            }
+            pages++
+
+            val pageNext = page.nextFromMessageId
+            if (pageNext == null || pageNext == cursor) {
+                nextCursor = null
+                break
+            }
+            nextCursor = pageNext
+            cursor = pageNext
+        }
+
+        return LoadedFiles(files = files, nextFromMessageId = nextCursor)
     }
 
     /**
@@ -784,6 +859,7 @@ class CloudFilesViewModel(
         const val CHANNEL_RETRY_MILLIS = 1_500L
         const val PAGE_ATTEMPTS = 3
         const val PAGE_RETRY_MILLIS = 1_000L
+        const val MAX_AUTO_PAGES = 20
         const val GALLERY_FOLDER = "Galeri"
     }
 }

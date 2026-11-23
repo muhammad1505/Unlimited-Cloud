@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -101,11 +102,13 @@ fun FilePreviewDialog(
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
     var localPath by remember(file.messageId) { mutableStateOf<String?>(null) }
     var failure by remember(file.messageId) { mutableStateOf<String?>(null) }
+    var progress by remember(file.messageId) { mutableStateOf<Float?>(null) }
 
     LaunchedEffect(file.messageId) {
         if (!previewable) return@LaunchedEffect
         viewModel.preview(
             file = file,
+            onProgress = { fraction -> progress = fraction },
             onLoaded = { path -> localPath = path },
             onFailed = { message -> failure = message },
         )
@@ -226,13 +229,27 @@ fun FilePreviewDialog(
                         localPath == null -> Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            CircularProgressIndicator()
-                            Spacer(Modifier.height(10.dp))
-                            Text(
-                                text = "Menyiapkan pratinjau…",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            val fraction = progress
+                            if (fraction != null) {
+                                LinearProgressIndicator(
+                                    progress = { fraction.coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth(0.7f),
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    text = "Mengunduh pratinjau ${(fraction * 100).toInt()}%",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            } else {
+                                CircularProgressIndicator()
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    text = "Menyiapkan pratinjau…",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
 
                         else -> PreviewContent(file = file, path = localPath.orEmpty())

@@ -21,6 +21,18 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.2.5 — 23 November 2026
+
+### Perbaikan
+
+- Menu Berkas kini memuat seluruh riwayat channel secara otomatis, jadi jumlah berkasnya sama dengan yang tertera di Pengaturan (mis. 288 berkas), bukan berhenti di 50 berkas pertama.
+- Cover berkas lama ikut muncul: bila berkas tanpa thumbnail sudah ada di cache TDLib (pernah dipratinjau atau diunduh), aplikasi membuat thumbnail dari salinan lokal itu tanpa mengunduh ulang.
+
+### Baru
+
+- Dialog pratinjau menampilkan progres unduhan dengan persentase saat menyiapkan berkas besar, bukan spinner tanpa keterangan.
+- Di desktop, berkas audio WAV bisa diputar lewat dialog pratinjau dengan bilah posisi dan tombol putar/jeda.
+
 ## 1.2.4 — 23 November 2026
 
 ### Baru
