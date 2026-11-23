@@ -47,47 +47,11 @@ class AppPreferences(
         put(KEY_CLOUD_ROOT_CHAT_ID, chatId?.toString())
 
     /**
-     * Whether the pre-forum channel is deleted once its files have been copied
-     * into the forum group. Off by default: deleting a chat cannot be undone, so
-     * the user decides, and until then the old chat is only renamed.
-     */
-    fun deleteLegacyChatAfterMigration(): Boolean = get(KEY_DELETE_LEGACY_CHAT) == "true"
-
-    fun setDeleteLegacyChatAfterMigration(enabled: Boolean) =
-        put(KEY_DELETE_LEGACY_CHAT, enabled.toString())
-
-    // --- Channel to forum-group migration -------------------------------------
-
-    /**
-     * A build before the forum switch stored files in a plain channel. Moving
-     * them is a long forwarding job, so its progress survives a restart: the
-     * cursor is the message id already handled in the old channel.
-     */
-    fun migrationSourceChatId(): Long? = get(KEY_MIGRATION_SOURCE)?.toLongOrNull()
-
-    fun setMigrationSourceChatId(chatId: Long?) = put(KEY_MIGRATION_SOURCE, chatId?.toString())
-
-    fun migrationTargetChatId(): Long? = get(KEY_MIGRATION_TARGET)?.toLongOrNull()
-
-    fun setMigrationTargetChatId(chatId: Long?) = put(KEY_MIGRATION_TARGET, chatId?.toString())
-
-    fun migrationCursor(): Long = get(KEY_MIGRATION_CURSOR)?.toLongOrNull() ?: 0L
-
-    fun setMigrationCursor(messageId: Long) = put(KEY_MIGRATION_CURSOR, messageId.toString())
-
-    private fun clearMigration() {
-        put(KEY_MIGRATION_SOURCE, null)
-        put(KEY_MIGRATION_TARGET, null)
-        put(KEY_MIGRATION_CURSOR, null)
-    }
-
-    /**
      * Drops the keys that belong to the Telegram account. The picked gallery
      * folders are kept: those are device grants, not account data.
      */
     fun clearAccountData() {
         put(KEY_CLOUD_ROOT_CHAT_ID, null)
-        clearMigration()
         put(KEY_GALLERY_SYNCED_KEYS, null)
         put(KEY_GALLERY_LAST_SYNC, null)
     }
@@ -266,10 +230,6 @@ class AppPreferences(
     private companion object {
         const val KEY_THEME = "theme"
         const val KEY_CLOUD_ROOT_CHAT_ID = "cloud.rootChatId"
-        const val KEY_DELETE_LEGACY_CHAT = "cloud.deleteLegacyChat"
-        const val KEY_MIGRATION_SOURCE = "cloud.migrationSource"
-        const val KEY_MIGRATION_TARGET = "cloud.migrationTarget"
-        const val KEY_MIGRATION_CURSOR = "cloud.migrationCursor"
         const val KEY_LAST_SEEN_VERSION = "changelog.lastSeenVersionCode"
         const val KEY_GALLERY_AUTO_SYNC = "gallery.autoSync"
         const val KEY_GALLERY_BACKGROUND_SYNC = "gallery.backgroundSync"

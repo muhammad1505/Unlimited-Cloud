@@ -44,7 +44,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.unlimitedcloud.AppBuildInfo
 import com.unlimitedcloud.auth.AuthUiState
-import com.unlimitedcloud.cloud.CloudChannelManager
 import com.unlimitedcloud.cloud.CloudChannelState
 import com.unlimitedcloud.cloud.CloudFilesViewModel
 import com.unlimitedcloud.cloud.ExplorerUiState
@@ -134,7 +133,6 @@ fun SettingsScreen(
             channelState = channelState,
             state = filesState,
             onRefresh = viewModel::refresh,
-            onDeleteLegacyChatChange = viewModel::setDeleteLegacyChatAfterMigration,
         )
 
         GalleryCard(
@@ -286,7 +284,6 @@ private fun StorageCard(
     channelState: CloudChannelState,
     state: ExplorerUiState,
     onRefresh: () -> Unit,
-    onDeleteLegacyChatChange: (Boolean) -> Unit,
 ) {
     SurfaceCard(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(title = "Penyimpanan")
@@ -311,21 +308,6 @@ private fun StorageCard(
             title = "Total ukuran",
             value = formatBytes(state.totalBytes),
             tint = MaterialTheme.colorScheme.secondary,
-        )
-        HorizontalDivider(
-            modifier = Modifier.padding(vertical = 2.dp),
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-        )
-        ToggleRow(
-            title = "Hapus channel lama otomatis",
-            description = "Setelah semua berkas lama selesai disalin ke grup topik, " +
-                "channel versi sebelumnya dihapus beserta isinya. Bila dimatikan, " +
-                "channel itu hanya diganti nama menjadi " +
-                "\"${CloudChannelManager.LEGACY_STORAGE_TITLE}\" dan dapat " +
-                "Anda hapus sendiri di Telegram.",
-            checked = state.deleteLegacyChat,
-            onCheckedChange = onDeleteLegacyChatChange,
-            enabled = channelState !is CloudChannelState.Migrating,
         )
         Spacer(Modifier.height(2.dp))
         Row(
@@ -802,8 +784,6 @@ private fun batteryGuidance(snapshot: BatteryOptimizationSnapshot): String {
 private fun channelLabel(state: CloudChannelState): String = when (state) {
     CloudChannelState.Idle -> "Belum disiapkan"
     CloudChannelState.Resolving -> "Menyiapkan penyimpanan…"
-    is CloudChannelState.Migrating ->
-        "Memindahkan berkas ke grup topik… ${state.forwarded} berkas"
     is CloudChannelState.Ready -> "Siap · chat ${state.chatId}"
     is CloudChannelState.Failed -> state.message
 }
