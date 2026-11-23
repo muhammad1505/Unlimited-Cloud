@@ -21,6 +21,18 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.2.2 — 23 November 2026
+
+### Baru
+
+- Sinkronisasi galeri mengunggah semua foto baru di folder terpilih, tidak lagi berhenti setelah 20 foto; jadwal latar belakang tetap memakai batch kecil agar muat dalam batas waktu sistem.
+- Menu optimasi baterai menampilkan nama dan id aplikasi, ditambah tombol Info aplikasi untuk membuka bagian Baterai di pengaturan sistem.
+
+### Perbaikan
+
+- Daftar berkas tidak lagi kosong setelah aplikasi ditutup: error sementara TDLib saat sesi baru dibuka tidak lagi dianggap channel hilang, dan daftar dimuat ulang otomatis beberapa kali sebelum menyerah.
+- Pintasan autostart bisa dibuka lagi di Android 11 ke atas karena paket pengaturan pabrikan didaftarkan di manifest; bila layar itu memang tidak ada, aplikasi membuka Info aplikasi dan menjelaskan tujuannya alih-alih menyebut perangkat tidak mendukung.
+
 ## 1.2.1 — 23 November 2026
 
 ### Baru

@@ -101,7 +101,7 @@ class GallerySyncWorker(
         }
 
         val viewModel = koin.get<CloudFilesViewModel>()
-        viewModel.syncGallery(auto = true, limit = BACKGROUND_BATCH_SIZE)
+        viewModel.syncGallery(auto = true, perFolderLimit = BACKGROUND_BATCH_SIZE)
 
         val started = withTimeoutOrNull(SYNC_START_TIMEOUT_MS) {
             viewModel.uiState.first { it.gallerySyncing }

@@ -159,8 +159,9 @@ python3 scripts/check-versions.py
 
 - Unggahan besar tetap bergantung pada koneksi dan kebijakan baterai perangkat;
   panduan baterai membantu, tetapi tidak menjamin proses latar belakang.
-- Sinkronisasi galeri memproses maksimal 20 foto per sesi dan tidak berjalan saat
-  aplikasi ditutup (belum memakai WorkManager).
+- Sinkronisasi galeri mengunggah semua foto baru saat aplikasi dibuka. Worker
+  WorkManager memproses 8 foto per folder tiap putaran agar muat batas waktu
+  sistem, dan jadwalnya tetap bergantung pada kebijakan baterai perangkat.
 - Folder galeri di desktop tidak tersedia; gunakan dialog berkas biasa.
 - Aplikasi belum menyertakan pengujian otomatis; verifikasi utama ada di CI
   (kompilasi, preflight, konsistensi versi, dan build release bertanda tangan).

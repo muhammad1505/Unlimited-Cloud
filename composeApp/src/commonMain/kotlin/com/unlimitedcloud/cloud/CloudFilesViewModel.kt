@@ -10,6 +10,7 @@ import com.unlimitedcloud.platform.LocalFolderSelection
 import com.unlimitedcloud.platform.MediaSaver
 import com.unlimitedcloud.settings.AppPreferences
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -135,13 +136,13 @@ class CloudFilesViewModel(
         scope.launch {
             state.update { it.copy(loading = true, error = null) }
 
-            val chatId = channelManager.ensureRootChannel()
+            val chatId = ensureChannelWithRetry()
             if (chatId == null) {
                 state.update { it.copy(loading = false, error = "Channel penyimpanan belum siap") }
                 return@launch
             }
 
-            runCatching { repository.listFiles(chatId) }
+            runCatching { loadPage(chatId) }
                 .onSuccess { page -> state.update { it.replaceWith(page) } }
                 .onFailure { failure ->
                     state.update {
@@ -165,7 +166,7 @@ class CloudFilesViewModel(
                 return@launch
             }
 
-            runCatching { repository.listFiles(chatId, fromMessageId = cursor) }
+            runCatching { loadPage(chatId, fromMessageId = cursor) }
                 .onSuccess { page ->
                     state.update { previous ->
                         val known = previous.files.mapTo(mutableSetOf()) { it.messageId }
@@ -480,11 +481,15 @@ class CloudFilesViewModel(
     }
 
     /**
-     * Uploads at most [GALLERY_BATCH_SIZE] new images from the chosen folder into
-     * the "Galeri" folder of the storage channel. Runs once per app session when
-     * auto sync is enabled, and on demand from Settings.
+     * Uploads every new image from the chosen folders into the "Galeri" folder of
+     * the storage channel, reading them in batches of [GALLERY_BATCH_SIZE] so a
+     * large folder does not have to be copied to the cache at once. Runs once per
+     * app session when auto sync is enabled, and on demand from Settings.
+     *
+     * @param perFolderLimit how many files one folder may contribute; the
+     *   background worker passes a small number to stay inside its time window.
      */
-    fun syncGallery(auto: Boolean = false, limit: Int = GALLERY_BATCH_SIZE) {
+    fun syncGallery(auto: Boolean = false, perFolderLimit: Int = Int.MAX_VALUE) {
         if (!gallerySource.supported) {
             if (!auto) reportError("Sinkronisasi galeri hanya tersedia di Android")
             return
@@ -516,52 +521,70 @@ class CloudFilesViewModel(
 
             // Every selected folder contributes its own incremental batch, so a
             // second folder does not wait for the first one to be exhausted.
-            val photos = folders.flatMap { folder ->
-                runCatching {
-                    gallerySource.pendingPhotos(
-                        folder = folder,
-                        alreadySynced = preferences.gallerySyncedKeys(),
-                        limit = limit,
-                    )
-                }.getOrElse { failure ->
-                    failed++
-                    logDiagnostic(
-                        LOG_TAG,
-                        "galeri ${folder.name} gagal dibaca: ${failure.message}",
-                    )
-                    emptyList()
+            // Photos are read batch by batch until the folder has no new file
+            // left, instead of stopping after one fixed-size batch: a folder with
+            // more files than the batch used to keep the rest waiting for the
+            // next sync. Attempted keys are remembered so a file that keeps
+            // failing cannot loop forever.
+            val attempted = preferences.gallerySyncedKeys().toMutableSet()
+
+            for (folder in folders) {
+                var folderUploaded = 0
+                var folderFailed = 0
+
+                while (folderUploaded + folderFailed < perFolderLimit) {
+                    val remaining = perFolderLimit - folderUploaded - folderFailed
+                    val batch = runCatching {
+                        gallerySource.pendingPhotos(
+                            folder = folder,
+                            alreadySynced = attempted,
+                            limit = minOf(GALLERY_BATCH_SIZE, remaining),
+                        )
+                    }.getOrElse { failure ->
+                        folderFailed++
+                        logDiagnostic(
+                            LOG_TAG,
+                            "galeri ${folder.name} gagal dibaca: ${failure.message}",
+                        )
+                        emptyList()
+                    }
+                    if (batch.isEmpty()) break
+
+                    for (photo in batch) {
+                        attempted += photo.key
+                        val transferId = "transfer-${++transferCounter}"
+                        state.update { current ->
+                            current.copy(
+                                transfers = listOf(
+                                    TransferItem(
+                                        id = transferId,
+                                        fileName = photo.name,
+                                        direction = TransferDirection.Upload,
+                                        progress = 0f,
+                                    ),
+                                ) + current.transfers,
+                            )
+                        }
+
+                        val result = uploadFile(transferId, chatId, photo.localPath, GALLERY_FOLDER)
+                        gallerySource.release(listOf(photo))
+
+                        result.fold(
+                            onSuccess = {
+                                folderUploaded++
+                                preferences.addGallerySyncedKeys(listOf(photo.key))
+                                logDiagnostic(LOG_TAG, "galeri tersinkron: ${photo.name}")
+                            },
+                            onFailure = { failure ->
+                                folderFailed++
+                                logDiagnostic(LOG_TAG, "galeri gagal: ${photo.name}: ${failure.message}")
+                            },
+                        )
+                    }
                 }
-            }
 
-            photos.forEach { photo ->
-                val transferId = "transfer-${++transferCounter}"
-                state.update { current ->
-                    current.copy(
-                        transfers = listOf(
-                            TransferItem(
-                                id = transferId,
-                                fileName = photo.name,
-                                direction = TransferDirection.Upload,
-                                progress = 0f,
-                            ),
-                        ) + current.transfers,
-                    )
-                }
-
-                val result = uploadFile(transferId, chatId, photo.localPath, GALLERY_FOLDER)
-                gallerySource.release(listOf(photo))
-
-                result.fold(
-                    onSuccess = {
-                        uploaded++
-                        preferences.addGallerySyncedKeys(listOf(photo.key))
-                        logDiagnostic(LOG_TAG, "galeri tersinkron: ${photo.name}")
-                    },
-                    onFailure = { failure ->
-                        failed++
-                        logDiagnostic(LOG_TAG, "galeri gagal: ${photo.name}: ${failure.message}")
-                    },
-                )
+                uploaded += folderUploaded
+                failed += folderFailed
             }
 
             if (uploaded > 0) refresh()
@@ -674,8 +697,39 @@ class CloudFilesViewModel(
         )
     }
 
+    /**
+     * Loads one page, retrying while TDLib is still opening the chat. A request
+     * sent right after sign-in used to come back as a temporary error, which left
+     * the explorer empty until the list was refreshed by hand.
+     */
+    private suspend fun loadPage(chatId: Long, fromMessageId: Long = 0L): CloudPage {
+        var lastFailure: Throwable? = null
+        repeat(PAGE_ATTEMPTS) { attempt ->
+            runCatching { repository.listFiles(chatId, fromMessageId) }
+                .onSuccess { return it }
+                .onFailure { failure ->
+                    lastFailure = failure
+                    delay(PAGE_RETRY_MILLIS * (attempt + 1))
+                }
+        }
+        throw lastFailure ?: IllegalStateException("Gagal memuat daftar berkas")
+    }
+
+    /** Resolves the channel, waiting out a TDLib session that is still starting. */
+    private suspend fun ensureChannelWithRetry(): Long? {
+        repeat(CHANNEL_ATTEMPTS) { attempt ->
+            channelManager.ensureRootChannel()?.let { return it }
+            delay(CHANNEL_RETRY_MILLIS * (attempt + 1))
+        }
+        return null
+    }
+
     private companion object {
         const val GALLERY_BATCH_SIZE = 20
+        const val CHANNEL_ATTEMPTS = 3
+        const val CHANNEL_RETRY_MILLIS = 1_500L
+        const val PAGE_ATTEMPTS = 3
+        const val PAGE_RETRY_MILLIS = 1_000L
         const val GALLERY_FOLDER = "Galeri"
     }
 }

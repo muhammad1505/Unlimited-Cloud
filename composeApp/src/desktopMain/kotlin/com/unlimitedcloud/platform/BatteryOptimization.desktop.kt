@@ -15,5 +15,7 @@ private object DesktopBatteryOptimizationController : BatteryOptimizationControl
 
     override fun openSystemSettings() = Unit
 
-    override fun openOemSettings(): Boolean = false
+    override fun openOemSettings(): BatterySettingsDestination = BatterySettingsDestination.Unavailable
+
+    override fun openAppInfo() = Unit
 }

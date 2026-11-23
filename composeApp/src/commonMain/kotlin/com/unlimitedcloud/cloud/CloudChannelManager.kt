@@ -7,6 +7,7 @@ import com.unlimitedcloud.tdjson.TdJsonSession
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -43,6 +44,10 @@ class CloudChannelManager(
             "Unlimited Cloud storage root (v1). Renaming or deleting this channel orphans uploaded files."
 
         private const val CHAT_SCAN_LIMIT = 100
+
+        /** `getChat` probes for the stored id before it is declared missing. */
+        private const val CHECK_ATTEMPTS = 2
+        private const val CHECK_DELAY_MILLIS = 500L
     }
 
     private val state = MutableStateFlow<CloudChannelState>(CloudChannelState.Idle)
@@ -55,29 +60,59 @@ class CloudChannelManager(
 
         state.value = CloudChannelState.Resolving
 
+        // While the session is still opening or its chat list is loading, TDLib
+        // answers requests with a temporary error. Treating that as "the channel
+        // is gone" cleared the stored id, and the explorer stayed empty until the
+        // channel happened to be found again. A definitive answer is retried once
+        // and the stored id only goes away when the chat really is missing.
+        var savedState = Check.Missing
         val saved = preferences.cloudRootChatId()
-        if (saved != null && isRootChannel(saved)) {
-            return ready(saved)
-        }
         if (saved != null) {
-            // The stored chat no longer exists or was renamed; forget it so a new
-            // one is created instead of retrying a dead id forever.
-            preferences.setCloudRootChatId(null)
+            for (attempt in 0 until CHECK_ATTEMPTS) {
+                savedState = checkRootChannel(saved)
+                if (savedState != Check.Unknown) break
+                delay(CHECK_DELAY_MILLIS * (attempt + 1))
+            }
+            if (savedState == Check.Valid) return ready(saved)
         }
 
-        val chatId = runCatching { findExistingChannel() ?: createChannel() }.getOrElse {
-            state.value = CloudChannelState.Failed(it.message ?: "gagal menyiapkan channel")
+        val found = runCatching { findExistingChannel() }.getOrElse { failure ->
+            state.value = CloudChannelState.Failed(failure.message ?: "gagal menyiapkan channel")
+            return null
+        }
+        if (found != null) {
+            preferences.setCloudRootChatId(found)
+            return ready(found)
+        }
+
+        if (saved != null && savedState == Check.Unknown) {
+            // Neither the stored id nor the search answered; creating a channel
+            // here would orphan every file already uploaded, so keep the id and
+            // let the next refresh try again.
+            state.value = CloudChannelState.Failed("Channel penyimpanan belum siap")
             return null
         }
 
-        if (chatId == null) {
+        if (saved != null) {
+            // The chat is gone or was renamed; forget it so a new one is created
+            // instead of retrying a dead id forever.
+            preferences.setCloudRootChatId(null)
+        }
+
+        val created = runCatching { createChannel() }.getOrElse { failure ->
+            state.value = CloudChannelState.Failed(failure.message ?: "gagal membuat channel")
+            return null
+        }
+        if (created == null) {
             state.value = CloudChannelState.Failed("channel $ROOT_CHANNEL_TITLE tidak dapat dibuat")
             return null
         }
 
-        preferences.setCloudRootChatId(chatId)
-        return ready(chatId)
+        preferences.setCloudRootChatId(created)
+        return ready(created)
     }
+
+    private enum class Check { Valid, Missing, Unknown }
 
     private fun ready(chatId: Long): Long {
         cachedChatId = chatId
@@ -88,17 +123,31 @@ class CloudChannelManager(
         return chatId
     }
 
-    /** True when [chatId] is still the channel this app owns. */
-    private suspend fun isRootChannel(chatId: Long): Boolean = runCatching {
-        val chat = session.call(
-            buildJsonObject {
-                put("@type", "getChat")
-                put("chat_id", chatId)
-            },
-        )
-        chat["@type"]?.jsonPrimitive?.contentOrNull != "error" &&
-            chat["title"]?.jsonPrimitive?.contentOrNull == ROOT_CHANNEL_TITLE
-    }.getOrDefault(false)
+    /**
+     * Whether [chatId] is still the channel this app owns. Errors that do not say
+     * the chat is missing are reported as [Check.Unknown], never as "gone".
+     */
+    private suspend fun checkRootChannel(chatId: Long): Check {
+        val chat = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "getChat")
+                    put("chat_id", chatId)
+                },
+            )
+        }.getOrElse { return Check.Unknown }
+
+        if (chat["@type"]?.jsonPrimitive?.contentOrNull == "error") {
+            val message = chat["message"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            return if (message.contains("not found", ignoreCase = true)) Check.Missing else Check.Unknown
+        }
+
+        return if (chat["title"]?.jsonPrimitive?.contentOrNull == ROOT_CHANNEL_TITLE) {
+            Check.Valid
+        } else {
+            Check.Missing
+        }
+    }
 
     private suspend fun findExistingChannel(): Long? {
         // Server-side search covers channels that are not loaded locally yet.

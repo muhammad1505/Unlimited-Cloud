@@ -50,6 +50,7 @@ import com.unlimitedcloud.cloud.CloudFilesViewModel
 import com.unlimitedcloud.cloud.ExplorerUiState
 import com.unlimitedcloud.log.LogStore
 import com.unlimitedcloud.platform.BatteryOptimizationSnapshot
+import com.unlimitedcloud.platform.BatterySettingsDestination
 import com.unlimitedcloud.platform.rememberBatteryOptimizationController
 import com.unlimitedcloud.platform.rememberGalleryFolderPicker
 import com.unlimitedcloud.ui.components.AppAvatar
@@ -209,6 +210,16 @@ fun SettingsScreen(
                     },
                 )
                 Spacer(Modifier.height(2.dp))
+                // The system apps carry this same name and package, so naming them
+                // here is what lets the user find the app in the settings list.
+                battery.appLabel?.let { label ->
+                    InfoRow(
+                        icon = AppIcons.Info,
+                        title = label,
+                        value = battery.packageName.orEmpty(),
+                        tint = MaterialTheme.colorScheme.secondary,
+                    )
+                }
                 InfoRow(
                     icon = AppIcons.Battery,
                     title = if (battery.ignoringOptimizations) {
@@ -256,11 +267,13 @@ fun SettingsScreen(
                     ) {
                         TextButton(
                             onClick = {
-                                val opened = batteryController.openOemSettings()
-                                batteryFeedback = if (opened) {
-                                    "Pengaturan autostart dibuka"
-                                } else {
-                                    "Perangkat ini tidak menyediakan pintasan autostart"
+                                batteryFeedback = when (batteryController.openOemSettings()) {
+                                    BatterySettingsDestination.Oem -> "Pengaturan autostart dibuka"
+                                    BatterySettingsDestination.AppInfo -> "Pintasan autostart " +
+                                        "tidak bisa dibuka di perangkat ini; Info aplikasi " +
+                                        "dibuka, pilih Baterai di sana"
+                                    BatterySettingsDestination.Unavailable -> "Perangkat ini tidak " +
+                                        "menyediakan pengaturan autostart"
                                 }
                                 battery = batteryController.snapshot()
                             },
@@ -280,6 +293,15 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                 ) {
+                    TextButton(
+                        onClick = {
+                            batteryController.openAppInfo()
+                            batteryFeedback = "Info aplikasi dibuka"
+                            battery = batteryController.snapshot()
+                        },
+                    ) {
+                        Text("Info aplikasi")
+                    }
                     TextButton(
                         onClick = {
                             batteryController.openSystemSettings()
@@ -515,8 +537,9 @@ private fun GalleryCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text("Unggah otomatis", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    text = "Berjalan saat aplikasi dibuka (20 foto) atau lewat jadwal " +
-                        "latar belakang (8 foto).",
+                    text = "Saat aplikasi dibuka, semua foto baru di folder terpilih " +
+                        "diunggah. Jadwal latar belakang mengambil beberapa foto tiap " +
+                        "putaran agar tidak melewati batas waktu sistem.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -711,8 +734,11 @@ private fun batteryGuidance(snapshot: BatteryOptimizationSnapshot): String {
         sdk >= 31 ->
             "Android 12 membatasi aplikasi yang jarang dibuka lewat App Standby; " +
                 "kecualikan aplikasi ini dari optimasi."
+        sdk >= 29 ->
+            "Android 10 menaruh opsi baterai di Info aplikasi → Baterai; matikan " +
+                "pembatasan agar unggahan tidak dijeda."
         sdk >= 26 ->
-            "Android 8–11 memakai Doze: unggahan besar bisa berhenti saat layar mati."
+            "Android 8–9 memakai Doze: unggahan besar bisa berhenti saat layar mati."
         else -> "Versi Android $sdk memakai aturan Doze lama."
     }
     return "$detail $base"

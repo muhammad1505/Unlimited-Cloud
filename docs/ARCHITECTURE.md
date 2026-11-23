@@ -122,8 +122,10 @@ enam jam dengan constraint jaringan dan baterai tidak rendah. Worker memakai
 `AppPreferences`, `TelegramEngine`, dan `CloudFilesViewModel` dari Koin yang sama;
 `MainActivity` hanya memulai Koin bila belum berjalan, sehingga proses yang
 dibangunkan WorkManager tetap aman. Worker menunggu sesi TDLib tersimpan siap,
-menjalankan batch 8 foto, lalu berhenti. Kunci sinkron dicatat per foto, jadi
-sisa batch dilanjutkan pada jadwal berikutnya. Tidak ada layanan latar depan atau
+menjalankan hingga 8 foto per folder (parameter `perFolderLimit`), lalu berhenti.
+Sinkronisasi dari layar Pengaturan memakai batas tak terhingga sehingga semua foto
+baru di folder terpilih terunggah dalam satu sesi. Kunci sinkron dicatat per foto,
+jadi sisa batch dilanjutkan pada jadwal berikutnya. Tidak ada layanan latar depan atau
 notifikasi.
 
 `MediaSaver` menulis foto unduhan ke MediaStore dengan `IS_PENDING`: entri baru
