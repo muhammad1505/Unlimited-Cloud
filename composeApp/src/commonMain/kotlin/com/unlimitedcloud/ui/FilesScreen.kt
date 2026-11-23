@@ -89,6 +89,7 @@ fun FilesScreen(
     var showUploadDialog by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<CloudFile?>(null) }
+    var previewTarget by remember { mutableStateOf<CloudFile?>(null) }
     var uploadFolder by remember { mutableStateOf<String?>(null) }
 
     val picker = rememberLocalFilePicker { path ->
@@ -308,6 +309,7 @@ fun FilesScreen(
                     onDownload = { viewModel.download(it) },
                     onDelete = { deleteTarget = it },
                     onShare = shareFile,
+                    onPreview = { previewTarget = it },
                 )
 
                 else -> FileList(
@@ -319,6 +321,7 @@ fun FilesScreen(
                     onDownload = { viewModel.download(it) },
                     onDelete = { deleteTarget = it },
                     onShare = shareFile,
+                    onPreview = { previewTarget = it },
                 )
             }
         }
@@ -370,6 +373,16 @@ fun FilesScreen(
             },
             onDismiss = { deleteTarget = null },
             destructive = true,
+        )
+    }
+
+    previewTarget?.let { file ->
+        FilePreviewDialog(
+            file = file,
+            viewModel = viewModel,
+            onDismiss = { previewTarget = null },
+            onDownload = { viewModel.download(file) },
+            onShare = { shareFile(file) },
         )
     }
 }
@@ -472,6 +485,7 @@ private fun FileList(
     onDownload: (CloudFile) -> Unit,
     onDelete: (CloudFile) -> Unit,
     onShare: (CloudFile) -> Unit,
+    onPreview: (CloudFile) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -486,6 +500,7 @@ private fun FileList(
                 onDownload = { onDownload(file) },
                 onDelete = { onDelete(file) },
                 onShare = { onShare(file) },
+                onPreview = { onPreview(file) },
             )
         }
 
@@ -510,6 +525,7 @@ private fun FileGrid(
     onDownload: (CloudFile) -> Unit,
     onDelete: (CloudFile) -> Unit,
     onShare: (CloudFile) -> Unit,
+    onPreview: (CloudFile) -> Unit,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 300.dp),
@@ -526,6 +542,7 @@ private fun FileGrid(
                 onDownload = { onDownload(file) },
                 onDelete = { onDelete(file) },
                 onShare = { onShare(file) },
+                onPreview = { onPreview(file) },
             )
         }
 
@@ -548,6 +565,7 @@ private fun FileCard(
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
+    onPreview: () -> Unit,
 ) {
     val kind = cloudFileKind(file.name)
     val meta = listOfNotNull(
@@ -583,6 +601,7 @@ private fun FileCard(
                             onDownload = onDownload,
                             onDelete = onDelete,
                             onShare = onShare,
+                            onPreview = onPreview,
                         )
                     }
                 }
@@ -661,6 +680,7 @@ private fun FileCard(
                         onDownload = onDownload,
                         onDelete = onDelete,
                         onShare = onShare,
+                        onPreview = onPreview,
                     )
                 }
             }
@@ -673,6 +693,7 @@ private fun FileActionsMenu(
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
+    onPreview: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -687,6 +708,20 @@ private fun FileActionsMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
+            DropdownMenuItem(
+                text = { Text("Pratinjau") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = AppIcons.Eye,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    onPreview()
+                },
+            )
             DropdownMenuItem(
                 text = { Text("Bagikan") },
                 leadingIcon = {

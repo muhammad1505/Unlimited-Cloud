@@ -394,6 +394,27 @@ class CloudFilesViewModel(
         }
     }
 
+    /**
+     * Fetches TDLib's cached copy for the in-app preview. Unlike [download] this
+     * adds no transfer entry and never writes to the device gallery: the bytes
+     * stay in TDLib's cache and the caller renders them directly.
+     */
+    fun preview(
+        file: CloudFile,
+        onLoaded: (String) -> Unit,
+        onFailed: (String) -> Unit = {},
+    ) {
+        logDiagnostic(LOG_TAG, "pratinjau mulai: ${file.name} (file ${file.fileId})")
+        scope.launch {
+            runCatching { repository.download(file.fileId) }
+                .onSuccess(onLoaded)
+                .onFailure { failure ->
+                    logDiagnostic(LOG_TAG, "pratinjau gagal: ${file.name}: ${failure.message}")
+                    onFailed(failure.message ?: "Gagal memuat pratinjau")
+                }
+        }
+    }
+
     fun delete(file: CloudFile) {
         scope.launch {
             state.update { it.copy(status = "Menghapus ${file.name}…", error = null) }

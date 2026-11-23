@@ -25,6 +25,7 @@ Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
 ### Baru
 
+- Berkas gambar dan teks bisa dipratinjau langsung di aplikasi lewat menu Pratinjau; isinya dibaca dari cache TDLib, jadi tidak perlu diunduh ke penyimpanan atau galeri perangkat.
 - Sinkronisasi galeri mengunggah semua foto baru di folder terpilih, tidak lagi berhenti setelah 20 foto; jadwal latar belakang tetap memakai batch kecil agar muat dalam batas waktu sistem.
 - Menu optimasi baterai menampilkan nama dan id aplikasi, ditambah tombol Info aplikasi untuk membuka bagian Baterai di pengaturan sistem.
 
