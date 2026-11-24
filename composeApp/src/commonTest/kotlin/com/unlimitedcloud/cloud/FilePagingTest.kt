@@ -128,7 +128,7 @@ class FilePagingTest {
             )
         }
 
-        val trimmed = trimTransfers(running + finished, limit = 4)
+        val trimmed = (running + finished).trimTransfers(limit = 4)
 
         assertEquals(listOf("r1", "r2", "r3", "f1"), trimmed.map { it.id })
     }

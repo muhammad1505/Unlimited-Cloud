@@ -1123,12 +1123,11 @@ private const val MAX_TRANSFERS = 200
  * Caps the transfer list without dropping a running transfer. Dropping one used
  * to hide that a download was still active, so the retry started a second one.
  */
-internal fun trimTransfers(
-    items: List<TransferItem>,
+internal fun List<TransferItem>.trimTransfers(
     limit: Int = MAX_TRANSFERS,
 ): List<TransferItem> {
-    val running = items.filter { it.status == TransferStatus.Running }
-    val finished = items.filter { it.status != TransferStatus.Running }
+    val running = filter { it.status == TransferStatus.Running }
+    val finished = filter { it.status != TransferStatus.Running }
     return running.take(limit) + finished.take((limit - running.size).coerceAtLeast(0))
 }
 
