@@ -12,7 +12,12 @@ import com.sun.jna.Pointer
  * `scripts/fetch-tdlib-android.sh` populates during the release build; without it
  * the client fails with a readable message instead of crashing the process.
  */
-actual fun createTdJsonClient(): TdJsonClient = AndroidTdJsonClient()
+actual fun createTdJsonClient(): TdJsonClient {
+    // JNA marshals String with the platform encoding unless told otherwise. Set
+    // it before the library loads so non-ASCII file names reach TDLib unmangled.
+    System.setProperty("jna.encoding", "UTF-8")
+    return AndroidTdJsonClient()
+}
 
 private interface TdJsonLibrary : Library {
     fun td_json_client_create(): Pointer?
@@ -39,32 +44,42 @@ private object AndroidTdJsonLibrary {
 
 private class AndroidTdJsonClient : TdJsonClient {
 
-    @Volatile
-    private var createdClient: Pointer? = null
+    private val createLock = Any()
 
-    private val client: Pointer? by lazy {
-        AndroidTdJsonLibrary.instance.td_json_client_create()?.also { createdClient = it }
+    /**
+     * A plain field instead of `by lazy`: [close] destroys the native handle, and
+     * a session that starts again afterwards has to create a fresh one. The lazy
+     * value used to keep pointing at the freed handle, so sending after a restart
+     * was a use-after-free.
+     */
+    private var clientPointer: Pointer? = null
+
+    private fun obtainClient(): Pointer = synchronized(createLock) {
+        clientPointer?.let { return@synchronized it }
+        val created = AndroidTdJsonLibrary.instance.td_json_client_create()
             ?: error("TDLib berhasil dimuat tetapi gagal membuat klien.")
+        clientPointer = created
+        created
     }
 
     override fun send(query: String) {
-        val pointer = client ?: return
-        AndroidTdJsonLibrary.instance.td_json_client_send(pointer, query)
+        AndroidTdJsonLibrary.instance.td_json_client_send(obtainClient(), query)
     }
 
     override fun execute(query: String): String? =
         AndroidTdJsonLibrary.instance.td_json_client_execute(null, query)
 
-    override fun receive(timeoutSeconds: Double): String? {
-        val pointer = client ?: return null
-        return AndroidTdJsonLibrary.instance.td_json_client_receive(pointer, timeoutSeconds)
-    }
+    override fun receive(timeoutSeconds: Double): String? =
+        AndroidTdJsonLibrary.instance.td_json_client_receive(obtainClient(), timeoutSeconds)
 
     override fun close() {
-        // Avoid touching the lazy client so closing a session that never loaded
-        // the native cannot throw a second UnsatisfiedLinkError.
-        val pointer = createdClient ?: return
-        createdClient = null
+        // Never create a client just to close it: a session that failed to load
+        // its native must stay closable without throwing a second link error.
+        val pointer = synchronized(createLock) {
+            val current = clientPointer
+            clientPointer = null
+            current
+        } ?: return
         runCatching { AndroidTdJsonLibrary.instance.td_json_client_destroy(pointer) }
     }
 }

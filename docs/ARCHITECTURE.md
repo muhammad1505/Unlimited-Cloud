@@ -7,7 +7,7 @@
               manifest, ikon, signing, R8, ABI split (arm64-v8a, armeabi-v7a)
 
 :composeApp   KMP library + aplikasi desktop JVM
-  commonMain  Compose UI, domain, state, SQLDelight, AppPreferences, expect API
+  commonMain  Compose UI, domain, state, AppPreferences, expect API
   androidMain actual TDLib JNI, SAF, WorkManager sync, MediaStore, FileProvider,
               battery, back handler
   desktopMain actual TDLib JNA, JFileChooser, clipboard, window
@@ -51,7 +51,8 @@ Channel pribadi adalah database sekaligus filesystem:
 - Setiap unggahan = satu pesan dokumen.
 - Caption pesan = nama folder virtual (`""` berarti root).
 - Daftar berkas = `getChatHistory` dengan pagination `from_message_id`.
-- Hapus = `deleteMessages` dengan `revoke = true`.
+- Hapus = `deleteMessages` dengan `revoke = true`, dipecah per 100 id karena
+  TDLib menolak permintaan yang membawa lebih banyak id sekaligus.
 
 `CloudFileRepository` menangani JSON TDLib secara mentah:
 
@@ -61,7 +62,9 @@ Channel pribadi adalah database sekaligus filesystem:
   `InputFile is not specified`.
 - Progres unggah dibaca dari `remote.uploaded_size` / `size`.
 - Unduh memanggil `downloadFile`, lalu mem-poll `getFile` sampai
-  `local.is_downloading_completed`, dengan timeout 10 menit.
+  `local.is_downloading_completed`. Tidak ada batas waktu tetap: unduhan yang
+  terus bertambah boleh berjalan, dan baru digagalkan bila tidak ada progres
+  selama 5 menit, sehingga berkas besar di koneksi lambat tidak ikut gagal.
 
 ## State dan preferensi
 
@@ -70,7 +73,9 @@ Koin sebagai singleton untuk shell signed-in. State-nya satu `StateFlow<Explorer
 berisi daftar berkas, filter, transfer, dan status galeri.
 
 `AppPreferences` adalah key/value kecil di
-`<appData>/settings.properties` (okio, multiplatform). Isinya:
+`<appData>/settings.properties` (okio, multiplatform). Setiap tulis memakai lock
+bersama dan berkas sementara yang di-`atomicMove`, dengan `.bak` sebagai cadangan
+bila berkas utama terpotong. Isinya:
 
 | Key | Fungsi |
 | --- | --- |
@@ -79,6 +84,7 @@ berisi daftar berkas, filter, transfer, dan status galeri.
 | `gallery.autoSync` | switch sinkronisasi otomatis |
 | `gallery.folderId` / `gallery.folderName` | folder SAF yang dipilih |
 | `gallery.syncedKeys` | dokumen yang sudah diunggah |
+| `gallery.failedKeys` | jumlah kegagalan per dokumen (dilewati setelah 3×) |
 | `gallery.lastSync` | label waktu sinkron terakhir |
 | `gallery.backgroundSync` | switch sync WorkManager saat aplikasi tertutup |
 | `gallery.autoSavePhotos` | simpan foto unduhan ke galeri perangkat |

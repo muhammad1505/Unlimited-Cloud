@@ -33,8 +33,11 @@ private fun share(context: Context, request: ShareRequest): ShareResult = runCat
     if (!source.isFile) error("Berkas belum tersedia di perangkat")
 
     val shareDirectory = File(context.cacheDir, "shared").apply { mkdirs() }
+    pruneOldShares(shareDirectory)
     val fileName = request.fileName.ifBlank { source.name }
-    val target = File(shareDirectory, fileName)
+    // A unique name per share: overwriting the file another app was still
+    // reading through its FileProvider URI truncated that share mid-read.
+    val target = uniqueShareTarget(shareDirectory, fileName)
     source.copyTo(target, overwrite = true)
 
     val uri = FileProvider.getUriForFile(
@@ -57,3 +60,29 @@ private fun share(context: Context, request: ShareRequest): ShareResult = runCat
 }.getOrElse { failure ->
     ShareResult.Failed(failure.message ?: "Tidak bisa membagikan berkas")
 }
+
+/** Removes copies from earlier shares; nothing reads them after the chooser closes. */
+private fun pruneOldShares(directory: File) {
+    val cutoff = System.currentTimeMillis() - SHARE_CACHE_MILLIS
+    directory.listFiles()?.forEach { file -> if (file.lastModified() < cutoff) file.delete() }
+}
+
+private fun uniqueShareTarget(directory: File, fileName: String): File {
+    val safe = fileName.substringAfterLast('/').substringAfterLast('\\').ifBlank { "berkas" }
+    var candidate = File(directory, safe)
+    if (!candidate.exists()) return candidate
+
+    val extension = safe.substringAfterLast('.', "")
+    val base = if (extension.isEmpty()) safe else safe.removeSuffix(".$extension")
+    var index = 2
+    while (candidate.exists()) {
+        candidate = File(
+            directory,
+            if (extension.isEmpty()) "$base ($index)" else "$base ($index).$extension",
+        )
+        index++
+    }
+    return candidate
+}
+
+private const val SHARE_CACHE_MILLIS = 60L * 60 * 1000

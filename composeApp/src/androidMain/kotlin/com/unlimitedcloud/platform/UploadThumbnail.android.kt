@@ -3,9 +3,15 @@ package com.unlimitedcloud.platform
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val THUMBNAIL_EDGE = 320
 private const val THUMBNAIL_QUALITY = 80
+
+/** Covers older than this are leftovers from files no longer being browsed. */
+private const val THUMBNAIL_CACHE_MILLIS = 7L * 24 * 60 * 60 * 1000
+
+private val pruneDue = AtomicBoolean(false)
 
 actual fun createUploadThumbnail(path: String): UploadThumbnail? = runCatching {
     val source = File(path)
@@ -38,10 +44,12 @@ actual fun createUploadThumbnail(path: String): UploadThumbnail? = runCatching {
         Bitmap.createScaledBitmap(decoded, width, height, true)
     }
 
-    val target = File(
-        AndroidPlatform.requireContext().cacheDir,
-        "thumb-${System.currentTimeMillis()}.jpg",
-    )
+    val thumbnailDirectory = File(AndroidPlatform.requireContext().cacheDir, "thumbs")
+        .apply { mkdirs() }
+    pruneThumbnails(thumbnailDirectory)
+    // Stable name per source path: regenerating a cover overwrites its own file
+    // instead of leaving another JPEG behind for every scroll or preview.
+    val target = File(thumbnailDirectory, "thumb-${path.stableId()}.jpg")
     target.outputStream().use { output ->
         scaled.compress(Bitmap.CompressFormat.JPEG, THUMBNAIL_QUALITY, output)
     }
@@ -50,3 +58,12 @@ actual fun createUploadThumbnail(path: String): UploadThumbnail? = runCatching {
 
     UploadThumbnail(target.absolutePath, width, height)
 }.getOrNull()
+
+private fun String.stableId(): String = (hashCode().toLong() and 0xffffffffL).toString(16)
+
+/** Runs once per process: scanning the directory on every cover would cost more than it saves. */
+private fun pruneThumbnails(directory: File) {
+    if (!pruneDue.compareAndSet(false, true)) return
+    val cutoff = System.currentTimeMillis() - THUMBNAIL_CACHE_MILLIS
+    directory.listFiles()?.forEach { file -> if (file.lastModified() < cutoff) file.delete() }
+}

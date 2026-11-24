@@ -22,9 +22,9 @@ import kotlinx.serialization.json.put
  * chat instead of a flat feed of documents. General (no folder) stays the
  * unnamed General topic, which TDLib selects when `topic_id` is null.
  *
- * The mapping is not persisted: the topic name is the folder name, so
- * `getForumTopics` recovers it after a reinstall and a renamed topic simply
- * gets a fresh one on the next upload.
+ * The mapping is cached for the session but not persisted: the topic name is the
+ * folder name, so `getForumTopics` recovers it after a reinstall. A cached id is
+ * dropped again as soon as Telegram reports the topic is gone.
  */
 class ForumTopics(private val session: TdJsonSession) {
 
@@ -39,6 +39,16 @@ class ForumTopics(private val session: TdJsonSession) {
     private val cache = mutableMapOf<Pair<Long, String>, Int>()
 
     fun forget() = cache.clear()
+
+    /**
+     * Drops the cached id for [folder] after Telegram rejected it (the user
+     * deleted the topic, or the group was edited). Without this a stale id kept
+     * failing every upload until the app restarted.
+     */
+    fun invalidate(chatId: Long, folder: String) {
+        val name = forumTopicName(folder) ?: return
+        cache.remove(chatId to name)
+    }
 
     /**
      * Returns the topic id for [folder] in [chatId], creating the topic when it
@@ -154,17 +164,23 @@ class ForumTopics(private val session: TdJsonSession) {
         response["message"]?.jsonPrimitive?.contentOrNull.orEmpty()
 }
 
+private const val TOPIC_NAME_LIMIT = 128
+
 /**
  * Folder names are free text, topic names are not: TDLib wants 1-128
  * characters on a single line. Null means "no topic", i.e. General.
+ *
+ * Names longer than the limit keep a short hash suffix, so two folders that
+ * share their first 128 characters do not end up sharing one topic.
  */
-internal fun forumTopicName(folder: String): String? =
-    folder
-        .replace('\n', ' ')
-        .trim()
-        .take(128)
-        .trim()
-        .takeIf { it.isNotEmpty() }
+internal fun forumTopicName(folder: String): String? {
+    val flat = folder.replace('\n', ' ').trim()
+    if (flat.isEmpty()) return null
+    if (flat.length <= TOPIC_NAME_LIMIT) return flat
+
+    val suffix = (flat.hashCode().toLong() and 0xffffffffL).toString(16).take(8)
+    return flat.take(TOPIC_NAME_LIMIT - suffix.length - 1).trimEnd() + "-" + suffix
+}
 
 /**
  * `topic_id` value for TDLib: a forum topic, or null for the General topic and

@@ -21,6 +21,23 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.3.5 — 24 November 2026
+
+### Perbaikan
+
+- Setelan tidak lagi bisa hilang atau rusak saat aplikasi ditutup di tengah penulisan: berkas setelan ditulis lewat berkas sementara lalu diganti sekaligus, dan id grup penyimpanan punya salinan cadangan. Sebelumnya kegagalan di sini bisa membuat aplikasi lupa grupnya lalu membuat grup baru.
+- Menghapus berkas saat daftar masih dimuat tidak lagi ikut menghapus topik folder beserta berkas lama yang belum sempat tampil.
+- Seleksi lebih dari 100 berkas kini bisa dihapus sekaligus: permintaan dipecah sesuai batas TDLib, bukan ditolak seluruhnya.
+- Folder yang topiknya sudah dihapus atau diganti nama dari aplikasi Telegram tetap bisa diunggah: aplikasi membuat topik baru, lalu memakai General bila topik tetap ditolak.
+- Unduhan besar tidak lagi gagal setelah 10 menit. Unduhan hanya dihentikan bila benar-benar berhenti membuat progres selama 5 menit, jadi berkas besar di koneksi lambat tetap selesai.
+- Sinkron galeri tidak lagi berjalan dua kali bersamaan, tidak lagi menyalin ratusan foto hanya untuk mengunggah segelintir, dan foto yang gagal tiga kali dilewati agar tidak menghabiskan kuota setiap jadwal.
+- Nama berkas non-ASCII (emoji atau huruf beraksen) tidak lagi rusak saat diunggah dari desktop Windows.
+- Sesi TDLib ditutup rapi saat keluar dari aplikasi desktop, sehingga basis data lokal tidak ditinggal di tengah penulisan.
+- Memilih folder untuk diunggah tidak lagi membekukan layar: penyalinan berjalan di latar belakang, berkas dengan nama sama tidak saling menimpa, dan salinan lama dibersihkan.
+- Cover dan berkas bagikan di cache tidak lagi menumpuk tanpa batas: nama berkas stabil per sumber dan salinan lama dipangkas.
+- Daftar berkas lebih ringan saat digulir karena filter dan pengurutan dihitung sekali per perubahan, bukan pada setiap penggambaran ulang.
+- SQLDelight yang tidak pernah dipakai dihapus dari build sehingga waktu build lebih singkat.
+
 ## 1.3.4 — 24 November 2026
 
 ### Perbaikan

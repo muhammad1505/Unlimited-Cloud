@@ -8,7 +8,6 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.kotlinComposeCompiler)
     alias(libs.plugins.kotlinSerialization)
-    alias(libs.plugins.sqldelight)
 }
 
 // --- App version -------------------------------------------------------------------
@@ -187,9 +186,6 @@ kotlin {
             implementation(libs.koin.core)
             implementation(libs.koin.compose)
 
-            implementation(libs.sqldelight.runtime)
-            implementation(libs.sqldelight.coroutines)
-
             implementation(libs.okio)
             implementation(libs.filekit.dialogs.compose)
         }
@@ -207,7 +203,6 @@ kotlin {
             // carries the dispatch libraries for every Android ABI.
             implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
             implementation(libs.koin.android)
-            implementation(libs.sqldelight.android.driver)
             // Periodic gallery sync while the app is closed.
             implementation(libs.androidx.work.runtime.ktx)
         }
@@ -215,7 +210,6 @@ kotlin {
         getByName("desktopMain").dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
-            implementation(libs.sqldelight.sqlite.driver)
 
             // TDLib's JSON C API is reached through JNA from java.library.path or
             // the libtdjson resource bundled by scripts/fetch-tdlib-desktop.sh.
@@ -236,14 +230,6 @@ kotlin {
 kotlin.sourceSets.getByName("commonMain").kotlin.srcDir(generatedTelegramDir)
 kotlin.sourceSets.getByName("commonMain").kotlin.srcDir(generatedVersionDir)
 kotlin.sourceSets.getByName("commonMain").kotlin.srcDir(generatedChangelogDir)
-
-sqldelight {
-    databases {
-        create("UnlimitedCloudDatabase") {
-            packageName.set("com.unlimitedcloud.db")
-        }
-    }
-}
 
 compose.desktop {
     application {

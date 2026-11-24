@@ -3,7 +3,9 @@ package com.unlimitedcloud.cloud
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class FilePagingTest {
 
@@ -99,5 +101,44 @@ class FilePagingTest {
 
         assertEquals(listOf(5L), loaded.files.map { it.messageId })
         assertNull(loaded.nextFromMessageId)
+    }
+
+    @Test
+    fun deletingIsOnlySafeWhenEveryHistoryPageIsLoaded() {
+        val loaded = ExplorerUiState(loading = false, canLoadMore = false, nextFromMessageId = null)
+
+        assertTrue(isHistoryComplete(loaded))
+        assertFalse(isHistoryComplete(loaded.copy(loading = true)))
+        assertFalse(isHistoryComplete(loaded.copy(loadingMore = true)))
+        assertFalse(isHistoryComplete(loaded.copy(canLoadMore = true)))
+        assertFalse(isHistoryComplete(loaded.copy(nextFromMessageId = 7L)))
+    }
+
+    @Test
+    fun trimmingTransfersKeepsRunningEntries() {
+        val running = (1..3).map { index ->
+            TransferItem(id = "r$index", fileName = "r", direction = TransferDirection.Download)
+        }
+        val finished = (1..5).map { index ->
+            TransferItem(
+                id = "f$index",
+                fileName = "f",
+                direction = TransferDirection.Download,
+                status = TransferStatus.Completed,
+            )
+        }
+
+        val trimmed = trimTransfers(running + finished, limit = 4)
+
+        assertEquals(listOf("r1", "r2", "r3", "f1"), trimmed.map { it.id })
+    }
+
+    @Test
+    fun messagesAreDeletedInBatchesTdlibAccepts() {
+        val batches = deleteBatches((1L..250L).toList())
+
+        assertEquals(listOf(100, 100, 50), batches.map { it.size })
+        assertEquals(MESSAGES_PER_DELETE, batches.first().size)
+        assertTrue(deleteBatches(emptyList()).isEmpty())
     }
 }

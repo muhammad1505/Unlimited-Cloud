@@ -13,7 +13,13 @@ import java.io.File
  * release packages include that resource, so a normal install needs no separate
  * TDLib setup.
  */
-actual fun createTdJsonClient(): TdJsonClient = DesktopTdJsonClient()
+actual fun createTdJsonClient(): TdJsonClient {
+    // JNA marshals String with the platform encoding unless told otherwise, and
+    // Windows with JDK 17 is not UTF-8. Non-ASCII file names reached TDLib
+    // mangled, so those uploads failed with "file not found".
+    System.setProperty("jna.encoding", "UTF-8")
+    return DesktopTdJsonClient()
+}
 
 private interface TdJsonLibrary : Library {
     fun td_json_client_create(): Pointer?
@@ -31,31 +37,40 @@ private class DesktopTdJsonClient : TdJsonClient {
 
     private val library: TdJsonLibrary by lazy { loadLibrary() }
 
-    @Volatile
-    private var createdClient: Pointer? = null
+    private val createLock = Any()
 
-    private val client: Pointer? by lazy {
-        library.td_json_client_create()?.also { createdClient = it }
+    /**
+     * A plain field instead of `by lazy`: [close] destroys the native handle, and
+     * a session that starts again afterwards needs a new one. Keeping the lazy
+     * value meant sending through a freed pointer (use-after-free).
+     */
+    private var clientPointer: Pointer? = null
+
+    private fun obtainClient(): Pointer = synchronized(createLock) {
+        clientPointer?.let { return@synchronized it }
+        val created = library.td_json_client_create()
             ?: error("TDLib berhasil dimuat tetapi gagal membuat klien.")
+        clientPointer = created
+        created
     }
 
     override fun send(query: String) {
-        val pointer = client ?: return
-        library.td_json_client_send(pointer, query)
+        library.td_json_client_send(obtainClient(), query)
     }
 
     override fun execute(query: String): String? = library.td_json_client_execute(null, query)
 
-    override fun receive(timeoutSeconds: Double): String? {
-        val pointer = client ?: return null
-        return library.td_json_client_receive(pointer, timeoutSeconds)
-    }
+    override fun receive(timeoutSeconds: Double): String? =
+        library.td_json_client_receive(obtainClient(), timeoutSeconds)
 
     override fun close() {
-        // Do not touch the lazy `client`: a session that failed to load the
+        // Do not touch the library lazily: a session that failed to load the
         // native must still be closable without trying to load it again.
-        val pointer = createdClient ?: return
-        createdClient = null
+        val pointer = synchronized(createLock) {
+            val current = clientPointer
+            clientPointer = null
+            current
+        } ?: return
         runCatching { library.td_json_client_destroy(pointer) }
     }
 

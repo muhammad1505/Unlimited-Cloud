@@ -14,12 +14,18 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.isTraySupported
 import androidx.compose.ui.window.rememberWindowState
+import com.unlimitedcloud.auth.TelegramEngine
 import com.unlimitedcloud.di.appModule
 import org.jetbrains.skia.Image
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.startKoin
 
 fun main() {
+    // JNA marshals String with the platform encoding unless told otherwise, and
+    // Windows with JDK 17 is not UTF-8. Non-ASCII file names reached TDLib
+    // mangled, so exactly those uploads failed with "file not found".
+    System.setProperty("jna.encoding", "UTF-8")
+
     if (GlobalContext.getOrNull() == null) {
         startKoin { modules(appModule) }
     }
@@ -35,6 +41,13 @@ fun main() {
             windowVisible = true
         }
 
+        // Close TDLib before the process disappears so its local database is
+        // flushed instead of being abandoned mid-write.
+        fun quit() {
+            runCatching { GlobalContext.getOrNull()?.get<TelegramEngine>()?.stop() }
+            exitApplication()
+        }
+
         if (isTraySupported && icon != null) {
             Tray(
                 icon = icon,
@@ -43,7 +56,7 @@ fun main() {
             ) {
                 Item("Buka Unlimited Cloud", onClick = ::showWindow)
                 Separator()
-                Item("Keluar", onClick = ::exitApplication)
+                Item("Keluar", onClick = ::quit)
             }
         }
 
@@ -51,7 +64,7 @@ fun main() {
             onCloseRequest = {
                 // With a tray the session keeps running in the background; without
                 // one, hiding the only window would make the app unreachable.
-                if (canHideToTray) windowVisible = false else exitApplication()
+                if (canHideToTray) windowVisible = false else quit()
             },
             visible = windowVisible,
             title = "Unlimited Cloud",

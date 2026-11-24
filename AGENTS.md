@@ -10,8 +10,8 @@ backend via **TDLib**.
   AGP 9 forbids applying `com.android.application` to a Kotlin Multiplatform
   module, so the APK is assembled here from `:composeApp`.
 - `composeApp/src/commonMain/`: Shared UI (Compose), domain models, state
-  management, SQLDelight database, and `expect` declarations for the platform
-  APIs. Generated sources (`AppBuildInfo`, `TelegramCredentials`,
+  management, and `expect` declarations for the platform APIs. Generated sources
+  (`AppBuildInfo`, `TelegramCredentials`,
   `ChangelogData`) land in `build/generated/…` and are never committed.
 - `composeApp/src/androidMain/`: Android `actual` implementations (TDLib JNI
   through JNA, Android paths, SAF file picker, gallery scan, WorkManager

@@ -8,13 +8,18 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 actual fun rememberLocalFolderPicker(onPicked: (LocalFolderSelection?) -> Unit): () -> Unit {
     val context = AndroidPlatform.requireContext()
     val result by rememberUpdatedState(onPicked)
+    val scope = rememberCoroutineScope()
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
@@ -23,7 +28,14 @@ actual fun rememberLocalFolderPicker(onPicked: (LocalFolderSelection?) -> Unit):
             result(null)
             return@rememberLauncherForActivityResult
         }
-        result(runCatching { copyFolderToCache(context, uri) }.getOrNull())
+        // Copying a folder of up to 200 files takes long enough that doing it on
+        // the main thread froze the UI (and could trip an ANR).
+        scope.launch {
+            val selection = withContext(Dispatchers.IO) {
+                runCatching { copyFolderToCache(context, uri) }.getOrNull()
+            }
+            result(selection)
+        }
     }
 
     return remember(launcher) { { launcher.launch(null) } }
@@ -33,12 +45,21 @@ actual fun rememberLocalFolderPicker(onPicked: (LocalFolderSelection?) -> Unit):
  * Copies the picked SAF tree into the cache so TDLib can upload from plain
  * paths. Bounded by [MAX_FILES] and [MAX_DEPTH] so a huge tree cannot fill the
  * cache or stall the picker.
+ *
+ * Every pick gets its own directory and every file a unique name: two files with
+ * the same display name (common across sub-folders) used to overwrite each other,
+ * so one of them was uploaded twice instead of both.
  */
 private fun copyFolderToCache(context: Context, treeUri: Uri): LocalFolderSelection? {
     val rootId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
         ?: return null
     val name = documentName(context, treeUri, rootId)?.ifBlank { "folder" } ?: "folder"
-    val targetDirectory = File(context.cacheDir, "uploads/${name.safeFileName()}").apply { mkdirs() }
+    val uploadRoot = File(context.cacheDir, "uploads").apply { mkdirs() }
+    pruneOldUploads(uploadRoot)
+    val targetDirectory = File(
+        uploadRoot,
+        "${name.safeFileName()}-${System.currentTimeMillis()}",
+    ).apply { mkdirs() }
 
     val collected = mutableListOf<String>()
     copyChildren(context, treeUri, rootId, targetDirectory, collected, depth = 0)
@@ -87,7 +108,7 @@ private fun copyChildren(
                     continue
                 }
 
-                val target = File(targetDirectory, displayName.safeFileName())
+                val target = uniqueTarget(targetDirectory, displayName)
                 val sourceUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
                 val copied = runCatching {
                     context.contentResolver.openInputStream(sourceUri)?.use { input ->
@@ -97,6 +118,33 @@ private fun copyChildren(
                 if (copied) collected += target.absolutePath
             }
         }
+    }
+}
+
+/** Never overwrites a file another file of the same pick already copied. */
+private fun uniqueTarget(directory: File, displayName: String): File {
+    val safe = displayName.safeFileName()
+    var candidate = File(directory, safe)
+    if (!candidate.exists()) return candidate
+
+    val extension = safe.substringAfterLast('.', "")
+    val base = if (extension.isEmpty()) safe else safe.removeSuffix(".$extension")
+    var index = 2
+    while (candidate.exists()) {
+        candidate = File(
+            directory,
+            if (extension.isEmpty()) "$base ($index)" else "$base ($index).$extension",
+        )
+        index++
+    }
+    return candidate
+}
+
+/** Deletes copies from picks that finished long ago; nothing reads them again. */
+private fun pruneOldUploads(root: File) {
+    val cutoff = System.currentTimeMillis() - MAX_CACHE_AGE_MILLIS
+    root.listFiles()?.forEach { directory ->
+        if (directory.lastModified() < cutoff) directory.deleteRecursively()
     }
 }
 
@@ -116,3 +164,4 @@ private fun String.safeFileName(): String =
 
 private const val MAX_DEPTH = 4
 private const val MAX_FILES = 200
+private const val MAX_CACHE_AGE_MILLIS = 24L * 60 * 60 * 1000

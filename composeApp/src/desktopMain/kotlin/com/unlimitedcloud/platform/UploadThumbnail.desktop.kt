@@ -9,6 +9,9 @@ import org.jetbrains.skia.Surface
 private const val THUMBNAIL_EDGE = 320
 private const val THUMBNAIL_QUALITY = 80
 
+/** Covers older than this are leftovers from files no longer being browsed. */
+private const val THUMBNAIL_CACHE_MILLIS = 7L * 24 * 60 * 60 * 1000
+
 actual fun createUploadThumbnail(path: String): UploadThumbnail? = runCatching {
     val source = File(path)
     if (!source.isFile) return@runCatching null
@@ -29,11 +32,21 @@ actual fun createUploadThumbnail(path: String): UploadThumbnail? = runCatching {
         .encodeToData(EncodedImageFormat.JPEG, THUMBNAIL_QUALITY)
         ?: return@runCatching null
 
-    val target = File(
-        System.getProperty("java.io.tmpdir") ?: ".",
-        "thumb-${System.currentTimeMillis()}.jpg",
-    )
+    // Cache lives with the rest of the app data instead of the system temp
+    // directory, where nothing ever cleaned these files up.
+    val directory = File(PlatformStorage.appDataDirectory, "cache/thumbs").apply { mkdirs() }
+    pruneThumbnails(directory)
+    // Stable name per source path: a regenerated cover overwrites its own file
+    // instead of adding another JPEG for every scroll or preview.
+    val target = File(directory, "thumb-${path.stableId()}.jpg")
     target.writeBytes(encoded.bytes)
 
     UploadThumbnail(target.absolutePath, width, height)
 }.getOrNull()
+
+private fun String.stableId(): String = (hashCode().toLong() and 0xffffffffL).toString(16)
+
+private fun pruneThumbnails(directory: File) {
+    val cutoff = System.currentTimeMillis() - THUMBNAIL_CACHE_MILLIS
+    directory.listFiles()?.forEach { file -> if (file.lastModified() < cutoff) file.delete() }
+}

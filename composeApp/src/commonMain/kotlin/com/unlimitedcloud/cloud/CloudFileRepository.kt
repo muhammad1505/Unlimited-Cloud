@@ -1,5 +1,7 @@
 package com.unlimitedcloud.cloud
 
+import com.unlimitedcloud.log.LOG_TAG
+import com.unlimitedcloud.log.logDiagnostic
 import com.unlimitedcloud.platform.UploadThumbnail
 import com.unlimitedcloud.tdjson.TdJsonSession
 import kotlinx.coroutines.delay
@@ -18,6 +20,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.TimeSource
 
 /** One uploaded file, as stored in the root group's message history. */
 data class CloudFile(
@@ -88,19 +92,13 @@ class CloudFileRepository(private val session: TdJsonSession) {
      * file until the list was refreshed by hand.
      */
     suspend fun prepareHistory(chatId: Long) {
+        // Opening the chat is what makes TDLib fetch remote history instead of
+        // only serving the local cache. It is deliberately not closed again:
+        // closing right after opening cancelled the fetch it had just started.
         runCatching {
             session.call(
                 buildJsonObject {
                     put("@type", "openChat")
-                    put("chat_id", chatId)
-                },
-            )
-        }
-        // Supergroups cannot be closed; an error here is harmless.
-        runCatching {
-            session.call(
-                buildJsonObject {
-                    put("@type", "closeChat")
                     put("chat_id", chatId)
                 },
             )
@@ -121,8 +119,9 @@ class CloudFileRepository(private val session: TdJsonSession) {
     ) {
         // General (no folder) needs no topic. A folder whose topic cannot be
         // created still gets uploaded, it just lands in General.
-        val topicId = folder?.let { topics.resolve(chatId, it) }
-        val response = session.call(
+        val resolvedTopicId = folder?.let { topics.resolve(chatId, it) }
+
+        suspend fun send(topicId: Int?): JsonObject = session.call(
             buildJsonObject {
                 put("@type", "sendMessage")
                 put("chat_id", chatId)
@@ -180,9 +179,23 @@ class CloudFileRepository(private val session: TdJsonSession) {
                 )
             },
         )
-        requireOk(response)
 
-        val fileId = response["content"]
+        var response = runCatching { send(resolvedTopicId) }
+        // A topic deleted or renamed from the Telegram app invalidates the cached
+        // id: retry once with a fresh topic, then fall back to General so a
+        // disappearing tab never fails an upload.
+        if (folder != null && topicFailure(response)) {
+            logDiagnostic(LOG_TAG, "topik '$folder' ditolak, mencoba topik baru")
+            topics.invalidate(chatId, folder)
+            response = runCatching { send(topics.resolve(chatId, folder)) }
+            if (topicFailure(response)) {
+                response = runCatching { send(null) }
+            }
+        }
+        val sent = response.getOrElse { throw it }
+        requireOk(sent)
+
+        val fileId = sent["content"]
             ?.jsonObject
             ?.get("document")
             ?.jsonObject
@@ -207,7 +220,7 @@ class CloudFileRepository(private val session: TdJsonSession) {
         fileId: Int,
         priority: Int = 16,
         onProgress: (Float?) -> Unit = {},
-    ): String = withTimeout(DOWNLOAD_TIMEOUT_MILLIS) {
+    ): String {
         session.call(
             buildJsonObject {
                 put("@type", "downloadFile")
@@ -219,6 +232,12 @@ class CloudFileRepository(private val session: TdJsonSession) {
             },
         ).let(::requireOk)
 
+        // A fixed ten minute budget failed large files on slow connections while
+        // TDLib was still making progress. Watch the progress itself instead: a
+        // transfer that keeps growing may run as long as it needs, a stalled one
+        // is reported right away.
+        var lastDownloaded = -1L
+        var lastProgressAt = TimeSource.Monotonic.markNow()
         var path = ""
         while (path.isEmpty()) {
             val file = session.call(
@@ -242,6 +261,13 @@ class CloudFileRepository(private val session: TdJsonSession) {
                 },
             )
 
+            if (downloaded != lastDownloaded) {
+                lastDownloaded = downloaded
+                lastProgressAt = TimeSource.Monotonic.markNow()
+            } else if (lastProgressAt.elapsedNow() > DOWNLOAD_STALL_TIMEOUT) {
+                error("Unduhan berhenti merespons. Periksa koneksi lalu coba lagi.")
+            }
+
             if (completed && !candidate.isNullOrBlank()) {
                 path = candidate
             } else {
@@ -249,7 +275,7 @@ class CloudFileRepository(private val session: TdJsonSession) {
             }
         }
         onProgress(1f)
-        path
+        return path
     }
 
     /**
@@ -287,23 +313,27 @@ class CloudFileRepository(private val session: TdJsonSession) {
     suspend fun deleteTopic(chatId: Long, folder: String): Boolean =
         topics.remove(chatId, folder)
 
+    /**
+     * Deletes a selection in batches: TDLib accepts at most 100 ids per request,
+     * so a larger multi-select used to be rejected as a whole.
+     */
     suspend fun deleteMessages(chatId: Long, messageIds: List<Long>) {
-        if (messageIds.isEmpty()) return
-
-        val response = session.call(
-            buildJsonObject {
-                put("@type", "deleteMessages")
-                put("chat_id", chatId)
-                put(
-                    "message_ids",
-                    buildJsonArray {
-                        messageIds.forEach { add(JsonPrimitive(it)) }
-                    },
-                )
-                put("revoke", true)
-            },
-        )
-        requireOk(response)
+        deleteBatches(messageIds).forEach { batch ->
+            val response = session.call(
+                buildJsonObject {
+                    put("@type", "deleteMessages")
+                    put("chat_id", chatId)
+                    put(
+                        "message_ids",
+                        buildJsonArray {
+                            batch.forEach { add(JsonPrimitive(it)) }
+                        },
+                    )
+                    put("revoke", true)
+                },
+            )
+            requireOk(response)
+        }
     }
 
     private suspend fun awaitUploadComplete(fileId: Int, onProgress: (Float?) -> Unit) {
@@ -377,12 +407,34 @@ class CloudFileRepository(private val session: TdJsonSession) {
         }
     }
 
+    /** True when a send failed because the forum topic it targeted is gone. */
+    private fun topicFailure(result: Result<JsonObject>): Boolean {
+        val message = result.exceptionOrNull()?.message
+            ?: result.getOrNull()?.let { response ->
+                if (response["@type"]?.jsonPrimitive?.contentOrNull == "error") {
+                    response["message"]?.jsonPrimitive?.contentOrNull
+                } else {
+                    null
+                }
+            }
+        return message?.contains("topic", ignoreCase = true) == true
+    }
+
     private companion object {
         const val PAGE_SIZE = 50
-        const val DOWNLOAD_TIMEOUT_MILLIS = 600_000L
         const val THUMBNAIL_TIMEOUT_MILLIS = 20_000L
         const val UPLOAD_TIMEOUT_MILLIS = 900_000L
         const val POLL_INTERVAL_MILLIS = 750L
         const val PROGRESS_POLL_MILLIS = 500L
+
+        /** A download that stops growing for this long is treated as broken. */
+        val DOWNLOAD_STALL_TIMEOUT = 5.minutes
     }
 }
+
+/** TDLib rejects a deleteMessages call carrying more ids than this. */
+internal const val MESSAGES_PER_DELETE = 100
+
+/** Splits ids into the batches one deleteMessages request may carry. */
+internal fun deleteBatches(messageIds: List<Long>): List<List<Long>> =
+    messageIds.chunked(MESSAGES_PER_DELETE)

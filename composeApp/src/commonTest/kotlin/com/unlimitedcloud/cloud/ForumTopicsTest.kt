@@ -6,6 +6,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -29,6 +30,15 @@ class ForumTopicsTest {
 
         assertEquals(128, name?.length)
         assertTrue(name!!.isNotEmpty())
+    }
+
+    @Test
+    fun longFolderNamesWithTheSamePrefixStayDistinct() {
+        val first = forumTopicName("a".repeat(200) + "-satu")
+        val second = forumTopicName("a".repeat(200) + "-dua")
+
+        assertEquals(128, first?.length)
+        assertNotEquals(first, second)
     }
 
     @Test

@@ -1,6 +1,8 @@
 package com.unlimitedcloud.platform
 
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermissions
 
 actual object PlatformStorage {
     private val root: String
@@ -16,8 +18,16 @@ actual object PlatformStorage {
         get() = "$root/tdlib/files"
 
     actual fun ensureDirectories() {
-        File(appDataDirectory).mkdirs()
-        File(tdlibDatabaseDirectory).mkdirs()
-        File(tdlibFilesDirectory).mkdirs()
+        listOf(root, appDataDirectory, tdlibDatabaseDirectory, tdlibFilesDirectory).forEach { path ->
+            val directory = File(path).apply { mkdirs() }
+            // TDLib's session database is not encrypted, so it must stay readable
+            // by this user only. POSIX only: Windows ignores the failure.
+            runCatching {
+                Files.setPosixFilePermissions(
+                    directory.toPath(),
+                    PosixFilePermissions.fromString("rwx------"),
+                )
+            }
+        }
     }
 }

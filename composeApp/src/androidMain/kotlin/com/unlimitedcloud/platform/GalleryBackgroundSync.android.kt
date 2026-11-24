@@ -117,8 +117,10 @@ class GallerySyncWorker(
     /**
      * WorkManager can start the process without MainActivity, so Koin may not be
      * running yet. Starting it here is safe: MainActivity only starts Koin when
-     * the global context is still empty.
+     * the global context is still empty. Still serialised, because two workers
+     * starting at once would both see an empty context and start Koin twice.
      */
+    @Synchronized
     private fun koinOrStart(): Koin? {
         GlobalContext.getOrNull()?.let { return it }
         AndroidPlatform.init(applicationContext)

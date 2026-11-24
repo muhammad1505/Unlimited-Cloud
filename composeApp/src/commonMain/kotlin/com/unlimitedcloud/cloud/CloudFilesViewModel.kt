@@ -80,21 +80,33 @@ data class ExplorerUiState(
     /** Bumped when a cover becomes available so cards retry their thumbnail. */
     val coverRevision: Int = 0,
 ) {
+    /**
+     * Kecachean per instance: setiap perubahan membuat instance baru lewat
+     * `copy`, jadi nilai cache tidak mungkin basi, sedangkan filter + sort tidak
+     * lagi dijalankan sekali per recomposition (dan sekali per cover baru).
+     */
+    private var visibleFilesCache: List<CloudFile>? = null
+
     val visibleFiles: List<CloudFile>
         get() {
+            visibleFilesCache?.let { return it }
             val filtered = files.filter { file ->
                 (selectedFolder == null || file.folder == selectedFolder) &&
                     (query.isBlank() || file.name.contains(query.trim(), ignoreCase = true))
             }
-            return when (sort) {
+            val sorted = when (sort) {
                 FileSort.Newest -> filtered.sortedByDescending { it.messageId }
                 FileSort.Name -> filtered.sortedBy { it.name.lowercase() }
                 FileSort.Size -> filtered.sortedByDescending { it.size }
             }
+            visibleFilesCache = sorted
+            return sorted
         }
 
+    private var totalBytesCache: Long? = null
+
     val totalBytes: Long
-        get() = files.sumOf { it.size }
+        get() = totalBytesCache ?: files.sumOf { it.size }.also { totalBytesCache = it }
 
     val activeTransfers: List<TransferItem>
         get() = transfers.filter { it.status == TransferStatus.Running }
@@ -304,7 +316,7 @@ class CloudFilesViewModel(
                         direction = TransferDirection.Upload,
                         progress = 0f,
                     ),
-                ) + it.transfers).take(MAX_TRANSFERS),
+                ) + it.transfers).trimTransfers(),
                 status = "Mengunggah $fileName…",
                 error = null,
             )
@@ -372,7 +384,7 @@ class CloudFilesViewModel(
                                 direction = TransferDirection.Upload,
                                 progress = 0f,
                             ),
-                        ) + current.transfers).take(MAX_TRANSFERS),
+                        ) + current.transfers).trimTransfers(),
                     )
                 }
 
@@ -410,9 +422,17 @@ class CloudFilesViewModel(
     private val missingCoverFiles = mutableSetOf<Long>()
     private val coverMutex = Mutex()
 
+    /** Bounded write so browsing thousands of files cannot grow the caches forever. */
+    private fun <K, V> MutableMap<K, V>.putBounded(key: K, value: V, limit: Int) {
+        if (key !in this && size >= limit) keys.firstOrNull()?.let { remove(it) }
+        this[key] = value
+    }
+
     fun download(file: CloudFile, onDownloaded: (String) -> Unit = {}) {
         val alreadyRunning = state.value.transfers.any {
-            it.fileId == file.fileId && it.status == TransferStatus.Running
+            it.direction == TransferDirection.Download &&
+                it.fileId == file.fileId &&
+                it.status == TransferStatus.Running
         }
         if (alreadyRunning) {
             state.update { it.copy(status = "Unduhan ${file.name} sedang berjalan") }
@@ -432,7 +452,7 @@ class CloudFilesViewModel(
                         fileId = file.fileId,
                         file = file,
                     ),
-                ) + it.transfers).take(MAX_TRANSFERS),
+                ) + it.transfers).trimTransfers(),
                 status = "Mengunduh ${file.name}…",
                 error = null,
             )
@@ -512,8 +532,9 @@ class CloudFilesViewModel(
         coverMutex.withLock {
             if (path == null) {
                 missingCoverFiles += file.messageId
+                if (missingCoverFiles.size > MAX_COVER_CACHE_ENTRIES) missingCoverFiles.clear()
             } else {
-                coverPaths[file.messageId] = path
+                coverPaths.putBounded(file.messageId, path, MAX_COVER_CACHE_ENTRIES)
                 missingCoverFiles -= file.messageId
             }
         }
@@ -527,7 +548,7 @@ class CloudFilesViewModel(
                 createUploadThumbnail(localPath)?.path
             } ?: return@launch
             coverMutex.withLock {
-                coverPaths[file.messageId] = path
+                coverPaths.putBounded(file.messageId, path, MAX_COVER_CACHE_ENTRIES)
                 missingCoverFiles -= file.messageId
             }
             state.update { it.copy(coverRevision = it.coverRevision + 1) }
@@ -536,13 +557,17 @@ class CloudFilesViewModel(
 
     private suspend fun resolveThumbnail(file: CloudFile): String? {
         val id = file.thumbnailId ?: return null
-        thumbnailCache[id]?.let { return it }
-        if (id in missingThumbnails) return null
+        coverMutex.withLock { thumbnailCache[id] }?.let { return it }
+        if (coverMutex.withLock { id in missingThumbnails }) return null
         val path = runCatching { repository.localThumbnail(id) }.getOrNull()
-        if (path == null) {
-            missingThumbnails += id
-        } else {
-            thumbnailCache[id] = path
+        coverMutex.withLock {
+            if (path == null) {
+                missingThumbnails += id
+                if (missingThumbnails.size > MAX_COVER_CACHE_ENTRIES) missingThumbnails.clear()
+            } else {
+                thumbnailCache.putBounded(id, path, MAX_COVER_CACHE_ENTRIES)
+                missingThumbnails -= id
+            }
         }
         return path
     }
@@ -576,7 +601,7 @@ class CloudFilesViewModel(
                     // removed when the whole history is in memory: an unloaded page
                     // may still hold files that would otherwise be lost with it.
                     val touchedFolders = files.mapNotNull { it.folder }.distinct()
-                    val historyComplete = !state.value.canLoadMore
+                    val historyComplete = isHistoryComplete(state.value)
                     state.update { current ->
                         val remaining = current.files.filterNot { it.messageId in removed }
                         current.copy(
@@ -691,7 +716,7 @@ class CloudFilesViewModel(
 
     private fun addTransfer(item: TransferItem) {
         state.update { current ->
-            current.copy(transfers = (listOf(item) + current.transfers).take(MAX_TRANSFERS))
+            current.copy(transfers = (listOf(item) + current.transfers).trimTransfers())
         }
     }
 
@@ -812,7 +837,6 @@ class CloudFilesViewModel(
             if (!auto) reportError("Sinkronisasi galeri hanya tersedia di Android")
             return
         }
-        if (state.value.gallerySyncing) return
         // The automatic entry point must respect the toggle; only the explicit
         // "Sinkronkan sekarang" action ignores it.
         if (auto && !preferences.galleryAutoSync()) return
@@ -823,9 +847,22 @@ class CloudFilesViewModel(
             return
         }
 
-        scope.launch {
-            state.update { it.copy(gallerySyncing = true, error = null) }
+        // Claim the sync in one atomic state update. Checking the flag and
+        // launching in two steps let two callers (Settings button, shell effect,
+        // background worker) pass the check together and upload the same photos
+        // twice.
+        var claimed = false
+        state.update { current ->
+            if (current.gallerySyncing) {
+                current
+            } else {
+                claimed = true
+                current.copy(gallerySyncing = true, error = null)
+            }
+        }
+        if (!claimed) return
 
+        scope.launch {
             val chatId = channelManager.ensureRootChannel()
             if (chatId == null) {
                 state.update {
@@ -844,7 +881,14 @@ class CloudFilesViewModel(
             // more files than the batch used to keep the rest waiting for the
             // next sync. Attempted keys are remembered so a file that keeps
             // failing cannot loop forever.
-            val attempted = preferences.gallerySyncedKeys().toMutableSet()
+            // Files that failed three times are skipped: otherwise one broken
+            // photo could use the whole background batch on every single run.
+            val attempted = (
+                preferences.gallerySyncedKeys() +
+                    preferences.galleryFailedAttempts()
+                        .filterValues { it >= MAX_GALLERY_ATTEMPTS }
+                        .keys
+                ).toMutableSet()
 
             for (folder in folders) {
                 var folderUploaded = 0
@@ -868,6 +912,9 @@ class CloudFilesViewModel(
                     }
                     if (batch.isEmpty()) break
 
+                    val syncedKeys = mutableListOf<String>()
+                    val failedKeys = mutableListOf<String>()
+
                     for (photo in batch) {
                         attempted += photo.key
                         val transferId = "transfer-${++transferCounter}"
@@ -880,7 +927,7 @@ class CloudFilesViewModel(
                                         direction = TransferDirection.Upload,
                                         progress = 0f,
                                     ),
-                                ) + current.transfers).take(MAX_TRANSFERS),
+                                ) + current.transfers).trimTransfers(),
                             )
                         }
 
@@ -890,15 +937,24 @@ class CloudFilesViewModel(
                         result.fold(
                             onSuccess = {
                                 folderUploaded++
-                                preferences.addGallerySyncedKeys(listOf(photo.key))
+                                syncedKeys += photo.key
                                 logDiagnostic(LOG_TAG, "galeri tersinkron: ${photo.name}")
                             },
                             onFailure = { failure ->
                                 folderFailed++
+                                failedKeys += photo.key
                                 logDiagnostic(LOG_TAG, "galeri gagal: ${photo.name}: ${failure.message}")
                             },
                         )
                     }
+
+                    // One settings write per batch instead of one per photo: the
+                    // whole file was rewritten (and read back) for every image.
+                    if (syncedKeys.isNotEmpty()) {
+                        preferences.addGallerySyncedKeys(syncedKeys)
+                        preferences.clearGalleryFailures(syncedKeys)
+                    }
+                    if (failedKeys.isNotEmpty()) preferences.recordGalleryFailures(failedKeys)
                 }
 
                 uploaded += folderUploaded
@@ -1055,7 +1111,31 @@ class CloudFilesViewModel(
         const val CHANNEL_RETRY_MILLIS = 1_500L
         const val PAGE_ATTEMPTS = 3
         const val PAGE_RETRY_MILLIS = 1_000L
-        const val MAX_TRANSFERS = 200
         const val GALLERY_FOLDER = "Galeri"
+        const val MAX_GALLERY_ATTEMPTS = 3
+        const val MAX_COVER_CACHE_ENTRIES = 500
     }
 }
+
+private const val MAX_TRANSFERS = 200
+
+/**
+ * Caps the transfer list without dropping a running transfer. Dropping one used
+ * to hide that a download was still active, so the retry started a second one.
+ */
+internal fun trimTransfers(
+    items: List<TransferItem>,
+    limit: Int = MAX_TRANSFERS,
+): List<TransferItem> {
+    val running = items.filter { it.status == TransferStatus.Running }
+    val finished = items.filter { it.status != TransferStatus.Running }
+    return running.take(limit) + finished.take((limit - running.size).coerceAtLeast(0))
+}
+
+/**
+ * True only when every history page is in memory. `canLoadMore` alone is false
+ * while a refresh or a load-more request is still running, so deleting files in
+ * that window used to remove a topic that still had unloaded files in it.
+ */
+internal fun isHistoryComplete(state: ExplorerUiState): Boolean =
+    !state.loading && !state.loadingMore && !state.canLoadMore && state.nextFromMessageId == null

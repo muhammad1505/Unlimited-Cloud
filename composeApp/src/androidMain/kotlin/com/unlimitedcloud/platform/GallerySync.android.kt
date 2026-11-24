@@ -44,18 +44,26 @@ private class AndroidGallerySyncSource(
             .asSequence()
             .filter { it.mimeType.startsWith("image/") }
             .sortedByDescending { it.lastModified }
+            // take(limit) comes before the copy: mapping first copied every
+            // scanned photo of the folder for each batch, then uploaded a handful
+            // and deleted the rest again.
+            .filter { document ->
+                val key = document.documentId
+                key !in alreadySynced && "${document.name}|$key" !in alreadySynced
+            }
+            .take(limit)
             .mapNotNull { document ->
-                val key = "${document.name}|${document.documentId}"
-                if (key in alreadySynced) return@mapNotNull null
                 val copy = copyToCache(treeUri, document) ?: return@mapNotNull null
                 GalleryPhoto(
-                    key = key,
+                    // The document id alone: the old "name|id" key changed when a
+                    // photo was renamed, which uploaded it a second time. The
+                    // legacy form is still honoured above so nothing re-uploads.
+                    key = document.documentId,
                     name = document.name,
                     localPath = copy.absolutePath,
                     sizeBytes = document.size,
                 )
             }
-            .take(limit)
             .toList()
     }
 
@@ -138,12 +146,17 @@ private class AndroidGallerySyncSource(
         target
     }.getOrNull()
 
-    /** Removes copies orphaned by a sync that was interrupted before release(). */
+    /**
+     * Removes copies orphaned by a sync that was interrupted before release().
+     * Only old files are deleted: wiping the whole directory on every batch also
+     * removed copies a still-running sync had just written.
+     */
     private fun clearStaleCache() {
         runCatching {
+            val cutoff = System.currentTimeMillis() - STALE_CACHE_MILLIS
             File(context.cacheDir, "gallery-sync")
                 .listFiles()
-                ?.forEach { file -> file.delete() }
+                ?.forEach { file -> if (file.lastModified() < cutoff) file.delete() }
         }
     }
 
@@ -158,6 +171,9 @@ private class AndroidGallerySyncSource(
     private companion object {
         const val MAX_DEPTH = 3
         const val MAX_SCAN = 600
+
+        /** Copies older than this were left behind by a killed sync. */
+        const val STALE_CACHE_MILLIS = 2L * 60 * 60 * 1000
     }
 }
 

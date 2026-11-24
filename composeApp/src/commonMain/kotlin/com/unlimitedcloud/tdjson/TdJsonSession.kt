@@ -64,6 +64,9 @@ class TdJsonSession(
     private var counter = 0L
     private var receiver: Job? = null
 
+    /** Set by [stop]; a stopped session owns a destroyed native client. */
+    private var closed = false
+
     /**
      * Loads the native and starts the receive loop.
      *
@@ -71,6 +74,12 @@ class TdJsonSession(
      * available through [fatalError].
      */
     fun start(): Boolean {
+        if (closed) {
+            // stop() destroyed the native client; starting again would call into
+            // a freed handle (the old pointer was still cached).
+            fatalErrorState.value = "Sesi TDLib sudah ditutup. Buka ulang aplikasi."
+            return false
+        }
         if (receiver != null) return true
 
         // `execute` forces the platform client to load its native library before
@@ -163,8 +172,25 @@ class TdJsonSession(
         if (logTraffic) logDiagnostic(LOG_TAG, "sesi TDLib ditutup")
         receiver?.cancel()
         receiver = null
+        closed = true
+
+        // Callers used to hang for the full request timeout when the session
+        // stopped mid-request; fail them right away instead.
+        val abandoned = if (lock.tryLock()) {
+            try {
+                pending.values.toList().also { pending.clear() }
+            } finally {
+                lock.unlock()
+            }
+        } else {
+            emptyList()
+        }
+        abandoned.forEach { deferred ->
+            deferred.completeExceptionally(IllegalStateException("Sesi TDLib ditutup"))
+        }
+
         // A session that never loaded its native must not make close() try to
-        // create a client; the desktop implementation guards this too.
+        // create a client; both platform clients guard this too.
         runCatching { client.close() }
     }
 
