@@ -136,11 +136,29 @@ Penjelasan modul dan alur data: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
   bagikan.
 - Tidak ada backend pihak ketiga; semua trafik menuju Telegram lewat TDLib.
 - APK rilis ditandatangani sendiri. Play Protect dapat menampilkan peringatan
-  "app belum dikenal" saat sideload; itu bukan permintaan izin penyimpanan. APK
-  tidak meminta izin penyimpanan/media sama sekali, dan CI memeriksa manifest APK
-  jadi lewat `scripts/check-apk-permissions.py`.
+  "app belum dikenal" atau developer belum terverifikasi saat sideload; itu bukan
+  permintaan izin penyimpanan (lihat [Instalasi APK](#instalasi-apk)). APK tidak
+  meminta izin penyimpanan/media sama sekali, dan CI memeriksa manifest APK jadi
+  lewat `scripts/check-apk-permissions.py`.
 
 Rincian: [docs/PRIVACY.md](docs/PRIVACY.md).
+
+## Instalasi APK
+
+APK rilis ditandatangani sendiri dan tidak didistribusikan lewat Google Play, jadi
+Play Protect dapat memperingatkan bahwa aplikasinya "belum dikenal" atau bahwa
+developernya belum diverifikasi. Peringatan itu berasal dari Google, bukan dari
+aplikasi, dan bukan permintaan izin penyimpanan.
+
+- Pada dialog Play Protect pilih **More details → Install anyway**, lalu izinkan
+  instalasi dari sumber tidak dikenal untuk aplikasi ini.
+- Dari komputer, `adb install UnlimitedCloud-<versi>-arm64-v8a.apk` tidak
+  terpengaruh pemeriksaan tersebut.
+- Peringatan "developer belum diverifikasi" hilang setelah developer mendaftar di
+  Android Developer Console dan mendaftarkan paket `com.unlimitedcloud` dengan APK
+  rilis yang bertanda tangan. Pendaftaran terikat pada nama paket + sertifikat,
+  jadi keystore rilis harus tetap sama; bila keystore diganti, aplikasi harus
+  didaftarkan ulang dan update tidak bisa menimpa instalasi lama.
 
 ## Versi dan changelog
 

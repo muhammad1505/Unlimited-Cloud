@@ -87,9 +87,11 @@ sebelum tag dibuat.
 
 4. Job release memverifikasi tag, mengunduh APK hasil build `main`, dan
    mempublikasikan release. APK dirilis sebagai
-   `UnlimitedCloud-<versi>-arm64-v8a.apk`, seragam dengan paket desktop. Catatan
-   rilis GitHub dibuat otomatis; untuk isi yang sama dengan aplikasi, salin
-   bagian teratas `CHANGELOG.md` bila perlu.
+   `UnlimitedCloud-<versi>-arm64-v8a.apk`, seragam dengan paket desktop. Job itu
+   memakai `--generate-notes`, jadi catatan rilisnya hanya berisi tautan compare.
+   Ganti isinya dengan bagian teratas `CHANGELOG.md` (tanpa baris judul `## versi`)
+   lewat `gh release edit v<versi> --notes-file <berkas>` agar catatan rilis sama
+   dengan changelog di aplikasi.
 5. Unduh APK dari halaman release dan uji instalasi pada perangkat bersih:
    login, unggah, unduh, bagikan, galeri, simpan foto ke galeri perangkat, sync
    latar belakang (buka Pengaturan → Galeri, lalu tutup aplikasi), baterai,
@@ -115,6 +117,21 @@ sebelum tag dibuat.
 - [ ] `versionCode` lebih besar dari rilis sebelumnya.
 - [ ] APK yang diunggah adalah artefak release yang ditandatangani, bukan debug.
 - [ ] Deskripsi toko menyebut kebutuhan akun Telegram.
+
+## Verifikasi developer Android
+
+Sejak 30 September 2026 Google memeriksa apakah aplikasi terdaftar pada developer
+yang terverifikasi. Aturan ini berlaku lebih dulu di Indonesia, Brasil, Singapura,
+dan Thailand, lalu meluas global pada 2027. APK yang tidak terdaftar tetap bisa
+dipasang lewat "Install anyway" atau `adb install`, tetapi menampilkan peringatan
+bahwa developernya belum diverifikasi.
+
+Sekali per paket: daftar di Android Developer Console, verifikasi identitas, lalu
+daftarkan paket `com.unlimitedcloud` dengan mengunggah APK rilis yang bertanda
+tangan. Jangan mengganti keystore rilis (`RELEASE_KEYSTORE_BASE64`, alias, dan
+password di secret CI): sertifikat baru membuat pendaftaran harus diulang dan
+update tidak bisa menimpa instalasi lama. Simpan salinan keystore dan password-nya
+di luar repo.
 
 ## Rollback
 

@@ -21,6 +21,16 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.3.6 — 24 November 2026
+
+### Baru
+
+- Bagian "Instalasi APK" di README menjelaskan peringatan Play Protect saat sideload: tombol yang dipilih untuk melanjutkan, jalur `adb install`, dan cara menghilangkan peringatan "developer belum terverifikasi" lewat pendaftaran paket di Android Developer Console.
+
+### Perbaikan
+
+- Panduan rilis kini mencatat bahwa catatan rilis GitHub masih memakai catatan otomatis dan harus diganti dengan bagian teratas CHANGELOG, serta memperingatkan agar keystore rilis tidak diganti karena pendaftaran developer terikat pada sertifikatnya.
+
 ## 1.3.5 — 24 November 2026
 
 ### Perbaikan
