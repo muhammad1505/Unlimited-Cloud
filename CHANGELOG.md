@@ -21,6 +21,23 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.3.7 — 24 November 2026
+
+### Baru
+
+- Menu Berkas kini dibuka sebagai kisi folder yang ringkas: tiap folder tampil sebagai satu kartu berisi nama, jumlah berkas, dan ukuran, termasuk "Tanpa folder" untuk berkas tanpa folder. Ketuk folder untuk melihat isinya, dan tombol kembali mengantar ke daftar folder.
+- Daftar berkas dimuat ulang otomatis setiap kali menu Berkas dibuka, jadi berkas yang baru selesai diunggah langsung muncul tanpa perlu menekan muat ulang.
+- Setiap proses (unggah, unduh, hapus, sinkronisasi foto) kini melapor lewat satu notifikasi mengambang di dalam aplikasi yang tetap terlihat di tab mana pun, lalu hilang sendiri.
+
+### Perbaikan
+
+- Topik folder tidak lagi terbuat dua kali atau berulang saat beberapa unggahan berjalan bersamaan. Pencarian dan pembuatan topik kini berjalan satu per satu dan dipakai bersama oleh seluruh bagian aplikasi.
+- Gagal memuat daftar topik karena koneksi lambat tidak lagi dianggap "topik belum ada", sehingga aplikasi tidak membuat topik kedua.
+- Pratinjau audio dipadatkan menjadi satu strip pemutar tipis tanpa ikon besar, sehingga lebih rapi di ponsel maupun jendela desktop.
+- Tombol hapus pada setiap baris transfer dihilangkan karena tombol Bersihkan sudah menangani pembersihan daftar.
+- Log aplikasi tidak lagi dipenuhi lalu lintas TDLib. Yang dicatat hanya langkah aplikasi, perubahan status sesi dan koneksi, serta kesalahan.
+- Kartu "Galeri" di Pengaturan diganti nama menjadi "Sinkron foto" dan "Folder galeri" menjadi "Folder foto", agar tidak tertukar dengan menu Berkas. Nama topik Galeri di Telegram tetap sama supaya berkas lama tidak terpisah.
+
 ## 1.3.6 — 24 November 2026
 
 ### Baru
