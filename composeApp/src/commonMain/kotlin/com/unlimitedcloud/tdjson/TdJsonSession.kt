@@ -130,7 +130,13 @@ class TdJsonSession(
                 val extra = update["@extra"]?.jsonPrimitive?.contentOrNull
                 if (logTraffic) {
                     val type = update["@type"]?.jsonPrimitive?.contentOrNull
-                    if (type != null && type !in QUIET_UPDATES) logDiagnostic(LOG_TAG, "<- $type")
+                    // Only connection and authorization milestones are worth a
+                    // line. Logging every update type filled the screen with
+                    // incoming messages, chat reads and file polls, which buried
+                    // what the app itself did.
+                    if (type != null && type in LOGGED_UPDATES) {
+                        logDiagnostic(LOG_TAG, "<- $type")
+                    }
                 }
                 if (extra != null) {
                     val deferred = lock.withLock { pending.remove(extra) }
@@ -157,7 +163,8 @@ class TdJsonSession(
             // Inside the try: a native send failure used to leave the deferred
             // registered forever, so the entry leaked and the id was never freed.
             client.send(payload.toString())
-            if (logTraffic) logDiagnostic(LOG_TAG, "-> ${request["@type"]?.jsonPrimitive?.contentOrNull}")
+            // Requests are not logged: the app already logs the step it is on
+            // (upload, download, topic), and one line per TDLib call drowned it.
             val response = withTimeout(timeoutMillis) { deferred.await() }
             if (logTraffic && response["@type"]?.jsonPrimitive?.contentOrNull == "error") {
                 logDiagnostic(LOG_TAG, "<- error: ${response["message"]?.jsonPrimitive?.contentOrNull}")
@@ -199,7 +206,7 @@ class TdJsonSession(
         const val IDLE_RETRY_MILLIS = 250L
         const val DEFAULT_TIMEOUT_MILLIS = 20_000L
 
-        /** High-frequency progress updates would drown out everything else. */
-        val QUIET_UPDATES = setOf("updateFile")
+        /** Update types that describe the session rather than Telegram traffic. */
+        val LOGGED_UPDATES = setOf("updateAuthorizationState", "updateConnectionState")
     }
 }

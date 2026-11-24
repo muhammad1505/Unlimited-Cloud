@@ -42,7 +42,9 @@ import kotlinx.coroutines.delay
 
 /**
  * In-app view of [com.unlimitedcloud.log.LogStore]: the same lines that go to
- * logcat, so a user without `adb` can still see what the app did.
+ * logcat, so a user without `adb` can still see what the app did. Only the
+ * app's own steps reach this list -- Telegram traffic such as incoming messages
+ * is never echoed, so what is shown here is the app, not the account.
  *
  * The list follows the tail automatically; newest line is at the bottom, which
  * is where the eye lands when something just failed. Copy and export use the
@@ -158,8 +160,8 @@ fun LogScreen(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = "Belum ada log. Transisi login, pesan TDLib, dan setiap " +
-                            "transfer akan muncul di sini.",
+                        text = "Belum ada log. Login, unggah, unduh, pembuatan topik, dan " +
+                            "kesalahan akan muncul di sini.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,

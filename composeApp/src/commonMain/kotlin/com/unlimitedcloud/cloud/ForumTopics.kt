@@ -3,6 +3,8 @@ package com.unlimitedcloud.cloud
 import com.unlimitedcloud.log.LOG_TAG
 import com.unlimitedcloud.log.logDiagnostic
 import com.unlimitedcloud.tdjson.TdJsonSession
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -34,11 +36,29 @@ class ForumTopics(private val session: TdJsonSession) {
 
         /** The colors Telegram accepts for a topic icon. */
         val TOPIC_COLORS = listOf(0x6FB9F0, 0xFFD67E, 0xCB86DB, 0x8EEE98, 0xFF93B2, 0xFB6F5F)
+
+        /**
+         * Resolving a topic is serialised process-wide, not per instance.
+         *
+         * `CloudFileRepository` and `CloudChannelManager` each own a
+         * [ForumTopics], and two uploads of the same folder used to run the
+         * lookup at the same time: both saw an empty topic list and both created
+         * a topic, which is where the duplicate tabs in Telegram came from.
+         * Holding one lock while the lookup and the create run means the second
+         * caller always sees the id the first one stored.
+         */
+        private val resolveLock = Mutex()
+
+        /** Ids known to the whole process, shared by every instance. */
+        private val knownTopicIds = mutableMapOf<Pair<Long, String>, Int>()
     }
 
     private val cache = mutableMapOf<Pair<Long, String>, Int>()
 
-    fun forget() = cache.clear()
+    fun forget() {
+        cache.clear()
+        knownTopicIds.clear()
+    }
 
     /**
      * Drops the cached id for [folder] after Telegram rejected it (the user
@@ -48,6 +68,7 @@ class ForumTopics(private val session: TdJsonSession) {
     fun invalidate(chatId: Long, folder: String) {
         val name = forumTopicName(folder) ?: return
         cache.remove(chatId to name)
+        knownTopicIds.remove(chatId to name)
     }
 
     /**
@@ -57,12 +78,36 @@ class ForumTopics(private val session: TdJsonSession) {
     suspend fun resolve(chatId: Long, folder: String): Int? {
         val name = forumTopicName(folder) ?: return null
         cache[chatId to name]?.let { return it }
-        val topicId = findTopic(chatId, name) ?: createTopic(chatId, name) ?: return null
-        cache[chatId to name] = topicId
-        return topicId
+
+        resolveLock.withLock {
+            // Another upload may have resolved it while this one waited.
+            cache[chatId to name]?.let { return it }
+            knownTopicIds[chatId to name]?.let { known ->
+                cache[chatId to name] = known
+                return known
+            }
+
+            val topicId = when (val lookup = findTopic(chatId, name)) {
+                is TopicLookup.Found -> lookup.id
+                // Only create when Telegram confirmed the topic is absent. A
+                // failed listing used to look identical to "no such topic",
+                // so a timeout created a second topic with the same name.
+                TopicLookup.Missing -> createTopic(chatId, name) ?: return null
+                TopicLookup.Failed -> return null
+            }
+            cache[chatId to name] = topicId
+            knownTopicIds[chatId to name] = topicId
+            return topicId
+        }
     }
 
-    private suspend fun findTopic(chatId: Long, name: String): Int? {
+    private sealed interface TopicLookup {
+        data class Found(val id: Int) : TopicLookup
+        data object Missing : TopicLookup
+        data object Failed : TopicLookup
+    }
+
+    private suspend fun findTopic(chatId: Long, name: String): TopicLookup {
         var offset = 0
         repeat(TOPIC_PAGE_LIMIT) {
             val response = runCatching {
@@ -79,23 +124,24 @@ class ForumTopics(private val session: TdJsonSession) {
                         put("limit", TOPIC_PAGE_SIZE)
                     },
                 )
-            }.getOrNull() ?: return null
-            if (isError(response)) return null
+            }.getOrNull() ?: return TopicLookup.Failed
+            if (isError(response)) return TopicLookup.Failed
 
             val topics = response["topics"]?.jsonArray.orEmpty()
             topics.forEach { topic ->
                 val info = topic.jsonObject["info"]?.jsonObject ?: return@forEach
                 if (info["name"]?.jsonPrimitive?.contentOrNull?.trim() == name) {
                     val found = info["forum_topic_id"]?.jsonPrimitive?.intOrNull
-                    if (found != null) return found
+                    if (found != null) return TopicLookup.Found(found)
                 }
             }
 
             val next = response["next_offset_forum_topic_id"]?.jsonPrimitive?.intOrNull ?: 0
-            if (topics.isEmpty() || next == 0 || next == offset) return null
+            if (topics.isEmpty() || next == 0 || next == offset) return TopicLookup.Missing
             offset = next
         }
-        return null
+        // Ran out of pages without a match: the topic really is not there.
+        return TopicLookup.Missing
     }
 
     private suspend fun createTopic(chatId: Long, name: String): Int? {
@@ -135,7 +181,10 @@ class ForumTopics(private val session: TdJsonSession) {
      */
     suspend fun remove(chatId: Long, folder: String): Boolean {
         val name = forumTopicName(folder) ?: return false
-        val topicId = cache[chatId to name] ?: findTopic(chatId, name) ?: return false
+        val topicId = cache[chatId to name]
+            ?: knownTopicIds[chatId to name]
+            ?: (findTopic(chatId, name) as? TopicLookup.Found)?.id
+            ?: return false
         val response = runCatching {
             session.call(
                 buildJsonObject {
@@ -153,6 +202,7 @@ class ForumTopics(private val session: TdJsonSession) {
             return false
         }
         cache.remove(chatId to name)
+        knownTopicIds.remove(chatId to name)
         logDiagnostic(LOG_TAG, "topik '$name' kosong lalu dihapus")
         return true
     }

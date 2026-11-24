@@ -21,8 +21,6 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.unlimitedcloud.ui.components.AudioPlayerControls
-import com.unlimitedcloud.ui.components.CloudFileKind
-import com.unlimitedcloud.ui.components.FileKindIcon
 import java.io.BufferedInputStream
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -145,9 +143,8 @@ private fun DesktopAudioPreview(path: String, fileName: String, modifier: Modifi
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        FileKindIcon(kind = CloudFileKind.Audio, size = 56.dp)
         AudioPlayerControls(
             positionMs = positionMs,
             durationMs = durationMs,

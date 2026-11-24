@@ -46,6 +46,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,13 +74,11 @@ import com.unlimitedcloud.ui.components.EmptyState
 import com.unlimitedcloud.ui.components.FileCover
 import com.unlimitedcloud.ui.components.GradientButton
 import com.unlimitedcloud.ui.components.IconPillButton
-import com.unlimitedcloud.ui.components.InfoBanner
 import com.unlimitedcloud.ui.components.MetricChip
 import com.unlimitedcloud.ui.components.ShimmerBlock
 import com.unlimitedcloud.ui.components.mimeTypeFor
 import com.unlimitedcloud.ui.util.formatBytes
 import com.unlimitedcloud.ui.util.formatProgress
-import kotlinx.coroutines.delay
 
 @Composable
 fun FilesScreen(
@@ -94,6 +93,11 @@ fun FilesScreen(
     var previewFiles by remember { mutableStateOf<List<CloudFile>>(emptyList()) }
     var previewIndex by remember { mutableStateOf(-1) }
     var uploadFolder by remember { mutableStateOf<String?>(null) }
+
+    // The Berkas tab opens on the folder tiles; a folder or a search opens the
+    // file list. Kept in saveable state so rotation does not jump back out.
+    var browsingFolders by rememberSaveable { mutableStateOf(true) }
+    val showingFolders = browsingFolders && state.query.isBlank()
 
     // Multi-select lives in the screen: the selection is a UI concern and must
     // not survive a refresh that replaces the file list.
@@ -169,15 +173,15 @@ fun FilesScreen(
             .coerceAtLeast(0)
     }
 
-    LaunchedEffect(state.status) {
-        if (state.status != null) {
-            delay(4000)
-            viewModel.dismissStatus()
+    // Back leaves selection mode, then the open folder, instead of closing the
+    // signed-in shell.
+    PlatformBackHandler(enabled = selecting || !showingFolders) {
+        when {
+            selecting -> exitSelection()
+            state.query.isNotBlank() -> viewModel.setQuery("")
+            else -> browsingFolders = true
         }
     }
-
-    // Back leaves selection mode instead of closing the signed-in shell.
-    PlatformBackHandler(enabled = selecting) { exitSelection() }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(
@@ -284,24 +288,42 @@ fun FilesScreen(
             Spacer(Modifier.height(10.dp))
             FolderChips(
                 state = state,
-                onSelect = viewModel::selectFolder,
+                onSelect = { folder ->
+                    browsingFolders = false
+                    viewModel.selectFolder(folder)
+                },
             )
 
-            if (state.status != null) {
-                Spacer(Modifier.height(8.dp))
-                InfoBanner(
-                    message = state.status.orEmpty(),
-                    onDismiss = viewModel::dismissStatus,
-                )
-            }
-
-            if (state.error != null) {
-                Spacer(Modifier.height(8.dp))
-                InfoBanner(
-                    message = state.error.orEmpty(),
-                    isError = true,
-                    onDismiss = viewModel::clearError,
-                )
+            if (!showingFolders) {
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        onClick = {
+                            if (state.query.isNotBlank()) viewModel.setQuery("") else browsingFolders = true
+                        },
+                    ) {
+                        Icon(
+                            imageVector = AppIcons.ChevronLeft,
+                            contentDescription = "Kembali ke folder",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        text = state.selectedFolder ?: "Semua berkas",
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "${state.visibleFiles.size} berkas",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             if (selecting) {
@@ -346,6 +368,15 @@ fun FilesScreen(
 
             when {
                 state.loading && state.files.isEmpty() -> SkeletonList()
+
+                showingFolders -> FolderBrowser(
+                    state = state,
+                    expanded = expanded,
+                    onOpenFolder = { folder ->
+                        browsingFolders = false
+                        viewModel.selectFolder(folder)
+                    },
+                )
 
                 state.visibleFiles.isEmpty() -> {
                     if (state.files.isEmpty()) {
@@ -575,6 +606,118 @@ private fun FolderChip(
             selectedLeadingIconColor = MaterialTheme.colorScheme.primary,
         ),
     )
+}
+
+/**
+ * The Berkas tab landing view: one compact tile per folder instead of a flat
+ * feed of every file. Tapping a tile opens that folder's files.
+ */
+@Composable
+private fun FolderBrowser(
+    state: ExplorerUiState,
+    expanded: Boolean,
+    onOpenFolder: (String?) -> Unit,
+) {
+    // A folder only exists as the caption of its messages, so the tiles are
+    // built from the loaded files; "Tanpa folder" collects the files uploaded
+    // without a folder.
+    val entries = remember(state.files, state.folders) {
+        buildList<Pair<String?, List<CloudFile>>> {
+            val root = state.files.filter { it.folder == null }
+            if (root.isNotEmpty()) add(null to root)
+            state.folders.forEach { folder ->
+                add(folder to state.files.filter { it.folder == folder })
+            }
+        }
+    }
+
+    if (entries.isEmpty()) {
+        EmptyState(
+            icon = AppIcons.Cloud,
+            title = "Belum ada berkas",
+            message = "Folder akan muncul di sini setelah berkas pertama " +
+                "diunggah. Setiap folder menjadi satu topik di grup Telegram Anda.",
+        )
+        return
+    }
+
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = if (expanded) 240.dp else 160.dp),
+        modifier = Modifier.fillMaxSize(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(bottom = 96.dp),
+    ) {
+        gridItems(entries, key = { it.first ?: "\u0000root" }) { (folder, files) ->
+            FolderTile(
+                name = folder ?: "Tanpa folder",
+                fileCount = files.size,
+                bytes = files.sumOf { it.size },
+                onClick = { onOpenFolder(folder) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun FolderTile(
+    name: String,
+    fileCount: Int,
+    bytes: Long,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.11f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = AppIcons.Folder,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "$fileCount berkas · ${formatBytes(bytes)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                imageVector = AppIcons.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
 }
 
 @Composable

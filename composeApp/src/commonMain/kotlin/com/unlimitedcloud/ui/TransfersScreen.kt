@@ -99,7 +99,6 @@ fun TransfersScreen(
                     TransferCard(
                         transfer = transfer,
                         onRetry = { viewModel.retryTransfer(transfer) },
-                        onRemove = { viewModel.removeTransfer(transfer.id) },
                     )
                 }
             }
@@ -111,7 +110,6 @@ fun TransfersScreen(
 private fun TransferCard(
     transfer: TransferItem,
     onRetry: () -> Unit,
-    onRemove: () -> Unit,
 ) {
     val accent = when (transfer.direction) {
         TransferDirection.Upload -> MaterialTheme.colorScheme.primary
@@ -258,14 +256,11 @@ private fun TransferCard(
                 }
             }
 
+            // Finished rows are cleared together by "Bersihkan" above; a second
+            // per-row delete action only repeated it in a smaller size.
             if (transfer.status == TransferStatus.Failed && transfer.file != null) {
                 TextButton(onClick = onRetry) {
                     Text("Coba lagi", style = MaterialTheme.typography.labelSmall)
-                }
-            }
-            if (transfer.status != TransferStatus.Running) {
-                TextButton(onClick = onRemove) {
-                    Text("Hapus", style = MaterialTheme.typography.labelSmall)
                 }
             }
             }

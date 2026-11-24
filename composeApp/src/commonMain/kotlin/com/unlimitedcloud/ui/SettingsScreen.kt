@@ -56,7 +56,6 @@ import com.unlimitedcloud.ui.components.ActionRow
 import com.unlimitedcloud.ui.components.AppAvatar
 import com.unlimitedcloud.ui.components.AppIcons
 import com.unlimitedcloud.ui.components.ConfirmDialog
-import com.unlimitedcloud.ui.components.InfoBanner
 import com.unlimitedcloud.ui.components.InfoRow
 import com.unlimitedcloud.ui.components.SectionHeader
 import com.unlimitedcloud.ui.components.StatusPill
@@ -110,20 +109,8 @@ fun SettingsScreen(
     ) {
         ProfileCard(user = user)
 
-        if (filesState.status != null) {
-            InfoBanner(
-                message = filesState.status.orEmpty(),
-                onDismiss = viewModel::dismissStatus,
-            )
-        }
-        if (filesState.error != null) {
-            InfoBanner(
-                message = filesState.error.orEmpty(),
-                isError = true,
-                onDismiss = viewModel::clearError,
-            )
-        }
-
+        // Process feedback is shown by the signed-in shell as one notification,
+        // so this page no longer repeats it as a banner.
         AppearanceCard(
             themeMode = themeMode,
             onThemeModeChange = onThemeModeChange,
@@ -340,7 +327,7 @@ private fun GalleryCard(
 ) {
     SurfaceCard(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(
-            title = "Galeri",
+            title = "Sinkron foto",
             action = {
                 if (state.gallerySupported) {
                     val statusColor = when {
@@ -382,7 +369,7 @@ private fun GalleryCard(
         Spacer(Modifier.height(6.dp))
         InfoRow(
             icon = AppIcons.Gallery,
-            title = "Folder galeri",
+            title = "Folder foto",
             value = when (state.galleryFolders.size) {
                 0 -> "Belum dipilih"
                 1 -> state.galleryFolders.first().name

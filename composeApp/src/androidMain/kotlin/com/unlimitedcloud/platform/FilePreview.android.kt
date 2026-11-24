@@ -38,8 +38,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.unlimitedcloud.ui.components.AudioPlayerControls
-import com.unlimitedcloud.ui.components.CloudFileKind
-import com.unlimitedcloud.ui.components.FileKindIcon
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -154,10 +152,8 @@ private fun AudioPreview(path: String, modifier: Modifier) {
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        FileKindIcon(kind = CloudFileKind.Audio, size = 56.dp)
-
         val error = failure
         if (error != null) {
             Text(

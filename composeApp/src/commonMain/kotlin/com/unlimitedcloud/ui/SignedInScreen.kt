@@ -58,6 +58,7 @@ import com.unlimitedcloud.auth.TelegramEngine
 import com.unlimitedcloud.cloud.CloudChannelManager
 import com.unlimitedcloud.cloud.CloudChannelState
 import com.unlimitedcloud.cloud.CloudFilesViewModel
+import com.unlimitedcloud.cloud.ExplorerUiState
 import com.unlimitedcloud.log.LogStore
 import com.unlimitedcloud.platform.PlatformBackHandler
 import com.unlimitedcloud.ui.components.AppAvatar
@@ -66,6 +67,7 @@ import com.unlimitedcloud.ui.components.BrandMark
 import com.unlimitedcloud.ui.components.ConfirmDialog
 import com.unlimitedcloud.ui.components.StatusPill
 import com.unlimitedcloud.ui.theme.ThemeMode
+import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
 
 private enum class AppSection(
@@ -129,10 +131,15 @@ fun SignedInScreen(
     PlatformBackHandler(enabled = overlay != null) { overlay = null }
 
     LaunchedEffect(Unit) {
-        viewModel.refresh()
         // Auto sync is a no-op unless the feature is enabled and a folder was
         // picked; it runs once when the signed-in shell first appears.
         viewModel.syncGallery(auto = true)
+    }
+
+    // Entering Berkas refreshes the list, so a file uploaded from another device
+    // or by the background photo sync shows up without a manual pull.
+    LaunchedEffect(section) {
+        if (section == AppSection.Files) viewModel.refresh()
     }
 
     val background = MaterialTheme.colorScheme.background
@@ -252,6 +259,18 @@ fun SignedInScreen(
                 }
             }
         }
+
+        // One notification surface for every process the app reports, on every
+        // tab. It used to live inside the Berkas page, so a transfer that
+        // finished while the Transfer tab was open said nothing.
+        AppNotificationHost(
+            state = filesState,
+            onDismissStatus = viewModel::dismissStatus,
+            onDismissError = viewModel::clearError,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(start = 20.dp, end = 20.dp, bottom = if (expanded) 16.dp else 96.dp),
+        )
     }
 
     if (showLogout) {
@@ -269,6 +288,71 @@ fun SignedInScreen(
             onDismiss = { showLogout = false },
             destructive = true,
         )
+    }
+}
+
+@Composable
+private fun AppNotificationHost(
+    state: ExplorerUiState,
+    onDismissStatus: () -> Unit,
+    onDismissError: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val message = state.error ?: state.status
+    val isError = state.error != null
+
+    // Transient by design: a process line that stays on screen becomes part of
+    // the layout instead of a notification.
+    LaunchedEffect(message) {
+        if (message != null) {
+            delay(4500)
+            if (isError) onDismissError() else onDismissStatus()
+        }
+    }
+
+    AnimatedVisibility(
+        visible = message != null,
+        enter = fadeIn(animationSpec = tween(180)) +
+            slideInVertically(animationSpec = tween(180)) { height -> height / 3 },
+        exit = fadeOut(animationSpec = tween(120)) +
+            slideOutVertically(animationSpec = tween(120)) { height -> height / 3 },
+        modifier = modifier,
+    ) {
+        val tint = if (isError) MaterialTheme.colorScheme.error else Color(0xFF10B981)
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, tint.copy(alpha = 0.35f)),
+            shadowElevation = 10.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(tint.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (isError) AppIcons.Info else AppIcons.Check,
+                        contentDescription = null,
+                        tint = tint,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+                Text(
+                    text = message.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 

@@ -63,17 +63,19 @@ fun AudioPlayerControls(
     // Hoisted out of the draw lambda: MaterialTheme is only readable while
     // composing.
     val accent = MaterialTheme.colorScheme.primary
-    val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)
+    val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
 
+    // One slim row instead of a card with a large button, a separate time row
+    // and a tall track: the preview now reads as a player strip, not a panel.
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Surface(
                 onClick = onTogglePlay,
@@ -89,45 +91,25 @@ fun AudioPlayerControls(
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },
-                modifier = Modifier.size(44.dp),
+                modifier = Modifier.size(36.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = if (playing) AppIcons.Pause else AppIcons.Play,
                         contentDescription = if (playing) "Jeda audio" else "Putar audio",
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(17.dp),
                     )
                 }
             }
 
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(1.dp),
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = formatClock(shownMs),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = formatClock(durationMs),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
-                }
-
                 Canvas(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(18.dp)
+                        .height(16.dp)
                         .pointerInput(enabled, durationMs) {
                             if (!enabled || durationMs <= 0) return@pointerInput
                             awaitEachGesture {
@@ -149,8 +131,8 @@ fun AudioPlayerControls(
                         },
                 ) {
                     val centerY = size.height / 2f
-                    val barHeight = 4.dp.toPx()
-                    val thumbRadius = 6.dp.toPx()
+                    val barHeight = 2.5.dp.toPx()
+                    val thumbRadius = 4.5.dp.toPx()
                     val top = centerY - barHeight / 2f
                     val radius = CornerRadius(barHeight / 2f)
                     val active = fraction.coerceIn(0f, 1f)
@@ -177,6 +159,26 @@ fun AudioPlayerControls(
                             ),
                         )
                     }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = formatClock(shownMs),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = formatClock(durationMs),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
                 }
             }
         }
