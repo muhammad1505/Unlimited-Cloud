@@ -181,12 +181,32 @@ def desktop_icon_names(root: Path) -> list[str]:
     return names
 
 
+def app_archives(root: Path) -> list[Path]:
+    """Returns the files that can be opened as jars.
+
+    An msi stores its payload under the installer's short file names, so the app
+    jar is not guaranteed to keep its `.jar` suffix once extracted. Anything that
+    really is a zip archive counts.
+    """
+    archives: list[Path] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() == ".jar" or zipfile.is_zipfile(path):
+            archives.append(path)
+    return archives
+
+
 def jar_entries(root: Path, names: list[str]) -> dict[str, list[tuple[Path, bytes]]]:
     """Collects named entries from every jar in the extracted app image."""
-    jars = sorted(root.rglob("*.jar"))
+    jars = app_archives(root)
     if not jars:
-        extracted = sum(1 for path in root.rglob("*") if path.is_file())
-        fail(f"{root}: tidak ada jar aplikasi di dalam paket ({extracted} berkas terekstrak)")
+        extracted = [path for path in sorted(root.rglob("*")) if path.is_file()]
+        sample = ", ".join(str(path.relative_to(root)) for path in extracted[:15])
+        fail(
+            f"{root}: tidak ada jar aplikasi di dalam paket "
+            f"({len(extracted)} berkas terekstrak: {sample})",
+        )
 
     found: dict[str, list[tuple[Path, bytes]]] = {name: [] for name in names}
     for jar in jars:
