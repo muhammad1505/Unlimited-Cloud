@@ -39,7 +39,13 @@ private object AndroidTdJsonLibrary {
 
 private class AndroidTdJsonClient : TdJsonClient {
 
-    private val client: Pointer? by lazy { AndroidTdJsonLibrary.instance.td_json_client_create() }
+    @Volatile
+    private var createdClient: Pointer? = null
+
+    private val client: Pointer? by lazy {
+        AndroidTdJsonLibrary.instance.td_json_client_create()?.also { createdClient = it }
+            ?: error("TDLib berhasil dimuat tetapi gagal membuat klien.")
+    }
 
     override fun send(query: String) {
         val pointer = client ?: return
@@ -55,6 +61,10 @@ private class AndroidTdJsonClient : TdJsonClient {
     }
 
     override fun close() {
-        client?.let { AndroidTdJsonLibrary.instance.td_json_client_destroy(it) }
+        // Avoid touching the lazy client so closing a session that never loaded
+        // the native cannot throw a second UnsatisfiedLinkError.
+        val pointer = createdClient ?: return
+        createdClient = null
+        runCatching { AndroidTdJsonLibrary.instance.td_json_client_destroy(pointer) }
     }
 }

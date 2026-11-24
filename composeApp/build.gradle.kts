@@ -217,10 +217,10 @@ kotlin {
             implementation(libs.kotlinx.coroutines.swing)
             implementation(libs.sqldelight.sqlite.driver)
 
-            // TDLib's JSON C API is reached through JNA from java.library.path or a
-            // libtdjson resource on the classpath. tdlight only publishes the JNI
-            // wrapper (tdjni) for desktop, never tdjson, so the deb/rpm/msi are
-            // packaged without natives and the user supplies libtdjson/.dll.
+            // TDLib's JSON C API is reached through JNA from java.library.path or
+            // the libtdjson resource bundled by scripts/fetch-tdlib-desktop.sh.
+            // The release packages include that resource, so an install needs no
+            // separate TDLib setup.
             implementation(libs.jna)
 
             // The JDK mixer only understands WAV/AIFF, so MP3 and FLAC are
@@ -255,6 +255,50 @@ compose.desktop {
             targetFormats(TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.Msi)
             packageName = "UnlimitedCloud"
             packageVersion = appVersionName
+            description = "Penyimpanan tanpa batas di Telegram"
+            vendor = "Unlimited Cloud"
+            copyright = "© 2026 Unlimited Cloud"
+
+            linux {
+                // Without iconFile jpackage falls back to the Kotlin logo. The
+                // same PNG is used by the window and tray.
+                iconFile.set(project.file("src/desktopMain/resources/icon.png"))
+                // Without appCategory jpackage writes Categories=Unknown.
+                appCategory = "Utility;FileTools;"
+                menuGroup = "Utility"
+                shortcut = true
+            }
+
+            windows {
+                iconFile.set(project.file("src/desktopMain/resources/icon.ico"))
+                menuGroup = "Unlimited Cloud"
+                shortcut = true
+                // Stable identity so a newer MSI upgrades the existing install.
+                upgradeUuid = "7f2f2c0e-6f5d-4a6e-9c1a-0f2b7e1d9a41"
+            }
+        }
+    }
+}
+
+// Packaging must never silently produce a desktop installer without TDLib; that
+// is exactly the package that used to stop at "Mesin Telegram belum merespons".
+// Local builds fetch the native with scripts/fetch-tdlib-desktop.sh, CI does the
+// same before calling packageDeb/packageRpm/packageMsi.
+val desktopNativeName = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+    "tdjson.dll"
+} else {
+    "libtdjson.so"
+}
+tasks.matching {
+    it.name in setOf("createDistributable", "packageDeb", "packageRpm", "packageMsi")
+}.configureEach {
+    doFirst {
+        val native = layout.projectDirectory
+            .file("src/desktopMain/resources/$desktopNativeName")
+            .asFile
+        check(native.isFile) {
+            "Native TDLib $desktopNativeName belum ada. Jalankan " +
+                "scripts/fetch-tdlib-desktop.sh sebelum membuat paket desktop."
         }
     }
 }

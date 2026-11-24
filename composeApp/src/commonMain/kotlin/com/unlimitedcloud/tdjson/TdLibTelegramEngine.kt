@@ -8,6 +8,7 @@ import com.unlimitedcloud.log.LOG_TAG
 import com.unlimitedcloud.log.logDiagnostic
 import com.unlimitedcloud.platform.PlatformStorage
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,23 +51,40 @@ class TdLibTelegramEngine(
     override val busy: StateFlow<Boolean> = busyState.asStateFlow()
 
     private var collector: Job? = null
+    private var fatalCollector: Job? = null
     private var watchdog: Job? = null
 
     override fun start() {
         if (collector != null) return
-        session.start()
-        collector = scope.launch {
+
+        // Subscribe before the receive loop starts. SharedFlow has replay = 0, so
+        // an authorization update emitted during startup would otherwise be lost
+        // and the UI would sit on the splash until the watchdog fired.
+        fatalCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            session.fatalError.collect { message ->
+                if (message != null) {
+                    logDiagnostic(LOG_TAG, "transport TDLib gagal: $message")
+                    state.value = AuthUiState.Failure(
+                        message = "Pustaka Telegram tidak dapat dimuat di perangkat ini.",
+                        hint = message,
+                    )
+                }
+            }
+        }
+        collector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             session.updates.collect { update -> handle(update) }
         }
-        // Without natives or network TDLib stays silent forever. Surface a
-        // recoverable failure instead of an endless splash screen; a later
-        // authorization update still replaces it automatically.
+
+        if (!session.start()) return
+
+        // Network trouble is different from a missing native: TDLib loads but
+        // stays silent. A later authorization update still replaces this state.
         watchdog = scope.launch {
             delay(INITIALIZATION_TIMEOUT_MILLIS)
             if (state.value is AuthUiState.Initializing) {
                 state.value = AuthUiState.Failure(
-                    "Mesin Telegram belum merespons. Periksa koneksi internet, " +
-                        "lalu tutup dan buka kembali aplikasi.",
+                    message = "Mesin Telegram belum merespons.",
+                    hint = "Periksa koneksi internet, lalu tutup dan buka kembali aplikasi.",
                 )
             }
         }
@@ -75,6 +93,8 @@ class TdLibTelegramEngine(
     override fun stop() {
         collector?.cancel()
         collector = null
+        fatalCollector?.cancel()
+        fatalCollector = null
         watchdog?.cancel()
         watchdog = null
         session.stop()
@@ -176,8 +196,9 @@ class TdLibTelegramEngine(
     private suspend fun sendTdlibParameters() {
         if (!config.isConfigured) {
             state.value = AuthUiState.Failure(
-                "TELEGRAM_API_ID / TELEGRAM_API_HASH belum diisi. " +
-                    "Simpan di local.properties atau environment variable.",
+                message = "Kredensial Telegram belum tertanam di build ini.",
+                hint = "Build ulang dengan TELEGRAM_API_ID dan TELEGRAM_API_HASH, " +
+                    "atau gunakan paket resmi dari halaman rilis.",
             )
             return
         }

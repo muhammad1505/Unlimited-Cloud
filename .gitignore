@@ -30,10 +30,14 @@ captures/
 *.iws
 .vscode/
 
-# TDLib Android natives are downloaded by scripts/fetch-tdlib-android.sh
+# TDLib natives are downloaded by scripts/fetch-tdlib-android.sh and
+# scripts/fetch-tdlib-desktop.sh, never committed.
 androidApp/src/main/jniLibs/
+composeApp/src/desktopMain/resources/libtdjson.so
+composeApp/src/desktopMain/resources/tdjson.dll
+composeApp/src/desktopMain/resources/libtdjson.dylib
 
-# Native build output only (TDLib .so/.dll/.dylib bindings are committed)
+# Native build output only
 *.o
 *.class
 # OS

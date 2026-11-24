@@ -49,7 +49,7 @@ Android dan Desktop memakai kode UI, domain, dan state management yang sama.
 | Kotlin | 2.4.21 |
 | Compose Multiplatform | 1.12.2 |
 | AGP | 9.5.2 |
-| TDLib | 1.8.65 (natives Android), TDLight 4.0.308 (desktop) |
+| TDLib | 1.8.65 (natives Android), 1.8.71 (natives desktop) |
 
 ## Mulai cepat
 
@@ -65,7 +65,9 @@ Android dan Desktop memakai kode UI, domain, dan state management yang sama.
    `TELEGRAM_API_ID` / `TELEGRAM_API_HASH`. Nilai di-generate menjadi
    `TelegramCredentials` saat build; kredensial asli tidak pernah masuk repository.
 
-2. **Unduh native TDLib Android** (rilis APK butuh ini):
+2. **Unduh native TDLib**:
+
+   Rilis APK butuh native Android:
 
    ```bash
    bash scripts/fetch-tdlib-android.sh
@@ -73,6 +75,17 @@ Android dan Desktop memakai kode UI, domain, dan state management yang sama.
 
    Skrip mengambil arsip `libtdjson.so` yang sudah dipin versi dan SHA-256-nya,
    lalu menaruhnya di `androidApp/src/main/jniLibs/<abi>/`.
+
+   Desktop butuh native untuk host build (Linux x86_64 atau Windows x86_64):
+
+   ```bash
+   bash scripts/fetch-tdlib-desktop.sh
+   ```
+
+   Skrip desktop menaruh `libtdjson.so`/`tdjson.dll` di
+   `composeApp/src/desktopMain/resources/`. Paket deb/rpm/msi membundel native
+   itu, jadi pengguna tidak perlu memasang TDLib terpisah. Kedua direktori
+   native di-ignore Git.
 
 3. **Build**:
 

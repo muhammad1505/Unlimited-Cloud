@@ -26,5 +26,9 @@ sealed interface AuthUiState {
 
     data object Closed : AuthUiState
 
-    data class Failure(val message: String) : AuthUiState
+    data class Failure(
+        val message: String,
+        /** Optional actionable detail (missing native, build credentials, …). */
+        val hint: String? = null,
+    ) : AuthUiState
 }

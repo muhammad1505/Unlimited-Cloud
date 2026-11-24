@@ -1,3 +1,4 @@
+import com.android.build.api.variant.FilterConfiguration
 import java.io.File
 import java.util.Properties
 plugins {
@@ -103,6 +104,22 @@ android {
         // Compressed natives shrink the download by roughly 60%; the system extracts
         // them at install time. Uncompressed would keep ABI APKs around 43 MB.
         jniLibs.useLegacyPackaging = true
+    }
+}
+
+// Name the APK like the desktop packages instead of AGP's module prefix
+// (androidApp-arm64-v8a-release.apk). The version still comes from
+// gradle.properties, so the APK, MSI and DEB never disagree.
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.outputs.forEach { output ->
+            val abi = output.filters
+                .firstOrNull { it.filterType == FilterConfiguration.FilterType.ABI }
+                ?.identifier
+            output.outputFileName.set(
+                "UnlimitedCloud-${appVersionName}-${abi ?: "universal"}.apk",
+            )
+        }
     }
 }
 

@@ -59,7 +59,7 @@ Aplikasi tidak mendeklarasikan izin penyimpanan/media apa pun; akses berkas sela
 lewat SAF. Untuk memverifikasi APK yang diunduh:
 
 ```bash
-python3 scripts/check-apk-permissions.py path/ke/unlimited-cloud.apk
+python3 scripts/check-apk-permissions.py path/ke/UnlimitedCloud-<versi>-arm64-v8a.apk
 ```
 
 Skrip itu membaca manifest APK jadi dan gagal bila menemukan izin penyimpanan,

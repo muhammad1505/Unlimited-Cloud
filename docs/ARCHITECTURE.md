@@ -32,15 +32,17 @@ MainActivity / main()
 
 `TdLibTelegramEngine` adalah state machine otorisasi. Update TDLib dikumpulkan di
 coroutine terpisah dari loop transport, sehingga handler boleh `suspend` memanggil
-`TdJsonSession.call` tanpa menghentikan update lain. Watchdog 20 detik mengubah
-state `Initializing` menjadi kegagalan yang bisa dipulihkan bila native/network
-tidak merespons.
+`TdJsonSession.call` tanpa menghentikan update lain. `TdJsonSession.start()`
+memuat native lebih dulu: bila `libtdjson` tidak ada, state langsung menjadi
+`Failure` dengan instruksi, bukan menunggu watchdog. Watchdog 20 detik menangani
+kasus native ada tetapi jaringan/TDLib tidak merespons.
 
 `TdJsonSession` menyatukan request/response berdasarkan `@extra` (lihat
 `tdjson/`), sementara `TdJsonClient` adalah `expect` transport:
 
 - Android: JNA ke `libtdjson.so` di `jniLibs/<abi>/`.
-- Desktop: JNA ke native TDLight Linux.
+- Desktop: JNA ke `libtdjson`/`tdjson.dll` yang dibundel di resources paket
+  (diambil `scripts/fetch-tdlib-desktop.sh`).
 
 ## Model penyimpanan
 
@@ -162,8 +164,8 @@ saat ini secara diam-diam, sedangkan pembaruan menampilkan rilis terbaru.
 
 ## Kegagalan yang sudah ditangani
 
-- Native TDLib tidak ada / kredensial dummy → layar kegagalan dengan instruksi,
-  bukan splash tanpa akhir.
+- Native TDLib tidak ada / kredensial dummy / jaringan diam → layar kegagalan
+  dengan instruksi yang sesuai, bukan splash tanpa akhir.
 - Koneksi putus saat transfer → status `Failed` dengan pesan, data lain tetap.
 - Folder galeri dicabut izinnya → `pendingPhotos` mengembalikan daftar kosong;
   pengguna memilih folder lagi.

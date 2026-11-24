@@ -148,6 +148,20 @@ jobs:
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew :androidApp:assembleRelease --stacktrace
 
+      # Keep the downloadable asset named like the desktop packages, not
+      # androidApp-<abi>-release.apk. This also proves the Gradle rename applied.
+      - name: Verify APK file name
+        run: |
+          set -euo pipefail
+          version=$(grep -oP '^unlimitedcloud\.versionName=\K.*' gradle.properties | tr -d '[:space:]')
+          expected="androidApp/build/outputs/apk/release/UnlimitedCloud-${version}-arm64-v8a.apk"
+          if [ ! -f "$expected" ]; then
+            echo "::error::expected $expected"
+            find androidApp/build/outputs/apk/release -maxdepth 2 -type f -name '*.apk' -print || true
+            exit 1
+          fi
+          echo "release APK: $expected"
+
       - name: Verify release signature
         run: |
           APKSIGNER="${ANDROID_HOME}/build-tools/36.0.0/apksigner"
@@ -207,15 +221,30 @@ jobs:
       - name: Setup Gradle (with caching)
         uses: gradle/actions/setup-gradle@v6
 
-      # jpackage shells out to the system packagers for deb and rpm.
+      # jpackage shells out to the system packagers for deb and rpm, and the
+      # package verifier needs cpio to unpack the rpm payload.
       - name: Install packaging tools
-        run: sudo apt-get update && sudo apt-get install -y fakeroot rpm
+        run: sudo apt-get update && sudo apt-get install -y fakeroot rpm cpio
+
+      # The desktop transport uses TDLib's JSON C API. Keep the checksum-pinned
+      # native in the app resources; without it the installed app cannot start
+      # TDLib even when TELEGRAM_API_ID/HASH were embedded correctly.
+      - name: Fetch TDLib desktop native
+        run: bash scripts/fetch-tdlib-desktop.sh
 
       - name: Package deb and rpm
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: ./gradlew :composeApp:packageDeb :composeApp:packageRpm --stacktrace
+
+      # Packaging succeeds even if the app jar is missing libtdjson or still
+      # carries the stock Kotlin icon. Inspect the finished installers instead.
+      - name: Verify packages contain TDLib and brand icon
+        run: |
+          python3 scripts/check-desktop-package.py \
+            composeApp/build/compose/binaries/main/deb/*.deb \
+            composeApp/build/compose/binaries/main/rpm/*.rpm
 
       - name: Upload deb
         uses: actions/upload-artifact@v7
@@ -249,11 +278,22 @@ jobs:
       - name: Setup Gradle (with caching)
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Fetch TDLib desktop native
+        shell: bash
+        run: bash scripts/fetch-tdlib-desktop.sh
+
       - name: Package msi
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: ./gradlew.bat :composeApp:packageMsi --stacktrace
+
+      # The msi is an opaque archive; extract its app image and check the jars.
+      - name: Verify msi contains TDLib and brand icon
+        shell: bash
+        run: |
+          python scripts/check-desktop-package.py \
+            composeApp/build/compose/binaries/main/msi/*.msi
 
       - name: Upload msi
         uses: actions/upload-artifact@v7

@@ -9,7 +9,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -46,33 +49,73 @@ class TdJsonSession(
     )
     val updates: SharedFlow<JsonObject> = updateFlow
 
+    /**
+     * A terminal transport failure, such as a missing `libtdjson` native.
+     *
+     * Kept separate from recoverable TDLib `error` updates: the authorization
+     * state machine cannot continue when the native never loaded, so the UI
+     * needs to explain that instead of waiting for the 20 second watchdog.
+     */
+    private val fatalErrorState = MutableStateFlow<String?>(null)
+    val fatalError: StateFlow<String?> = fatalErrorState.asStateFlow()
+
     private val lock = Mutex()
     private val pending = mutableMapOf<String, CompletableDeferred<JsonObject>>()
     private var counter = 0L
     private var receiver: Job? = null
 
-    fun start() {
-        if (receiver != null) return
-        if (logTraffic) {
-            // TDLib's own log stays quiet by default; level 1 surfaces errors and
-            // warnings in logcat without flooding it. Raise to 5 for a full trace.
-            runCatching {
-                client.execute("""{"@type":"setLogVerboseLevel","new_verbose_level":$tdlibVerboseLevel}""")
-            }
+    /**
+     * Loads the native and starts the receive loop.
+     *
+     * @return `false` when the transport could not be initialized; the reason is
+     * available through [fatalError].
+     */
+    fun start(): Boolean {
+        if (receiver != null) return true
+
+        // `execute` forces the platform client to load its native library before
+        // a receive loop exists. A missing libtdjson otherwise looks exactly like
+        // a silent network problem because every receive call was swallowed.
+        val preflight = runCatching {
+            client.execute(
+                """{"@type":"setLogVerboseLevel","new_verbose_level":$tdlibVerboseLevel}""",
+            )
         }
+        val preflightFailure = preflight.exceptionOrNull()
+        if (preflightFailure != null) {
+            fatalErrorState.value = preflightFailure.message
+                ?: preflightFailure::class.simpleName
+                ?: "Pustaka TDLib tidak dapat dimuat."
+            return false
+        }
+
+        fatalErrorState.value = null
         receiver = scope.launch(Dispatchers.Default) {
             while (isActive) {
-                // A missing or broken native library must not spin: back off before
-                // retrying so a device without libtdjson stays idle instead of
-                // flooding the log with exceptions.
-                val raw = runCatching { client.receive(RECEIVE_TIMEOUT_SECONDS) }.getOrNull()
+                val received = runCatching { client.receive(RECEIVE_TIMEOUT_SECONDS) }
+                val raw = received.getOrNull()
+                val failure = received.exceptionOrNull()
+                if (failure != null) {
+                    // After stop() the receiver is cancelled and the native is
+                    // closed while this call may still unwind; that is normal.
+                    if (isActive) {
+                        fatalErrorState.value = failure.message
+                            ?: failure::class.simpleName
+                            ?: "Pustaka TDLib berhenti merespons."
+                    }
+                    break
+                }
                 if (raw == null) {
                     delay(IDLE_RETRY_MILLIS)
                     continue
                 }
                 val update = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
                 if (update == null) {
-                    if (logTraffic) logDiagnostic(LOG_TAG, "update tidak bisa di-parse: ${raw.take(120)}")
+                    if (logTraffic) {
+                        // Never echo the payload: TDLib updates may contain chat
+                        // text, names, phone numbers or file metadata.
+                        logDiagnostic(LOG_TAG, "update TDLib tidak bisa di-parse (${raw.length} byte)")
+                    }
                     continue
                 }
                 val extra = update["@extra"]?.jsonPrimitive?.contentOrNull
@@ -90,6 +133,7 @@ class TdJsonSession(
                 updateFlow.emit(update)
             }
         }
+        return true
     }
 
     suspend fun call(request: JsonObject, timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS): JsonObject {
@@ -119,7 +163,9 @@ class TdJsonSession(
         if (logTraffic) logDiagnostic(LOG_TAG, "sesi TDLib ditutup")
         receiver?.cancel()
         receiver = null
-        client.close()
+        // A session that never loaded its native must not make close() try to
+        // create a client; the desktop implementation guards this too.
+        runCatching { client.close() }
     }
 
     private companion object {

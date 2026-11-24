@@ -9,7 +9,9 @@ import java.io.File
  * Desktop transport backed by TDLib's JSON C API (`tdjson`).
  *
  * The native library is resolved from `java.library.path`; if it is not there it
- * is extracted from a bundled `tdlight-natives-*` jar sitting on the classpath.
+ * is extracted from a bundled `tdjson` resource sitting on the classpath. The
+ * release packages include that resource, so a normal install needs no separate
+ * TDLib setup.
  */
 actual fun createTdJsonClient(): TdJsonClient = DesktopTdJsonClient()
 
@@ -29,7 +31,13 @@ private class DesktopTdJsonClient : TdJsonClient {
 
     private val library: TdJsonLibrary by lazy { loadLibrary() }
 
-    private val client: Pointer? by lazy { library.td_json_client_create() }
+    @Volatile
+    private var createdClient: Pointer? = null
+
+    private val client: Pointer? by lazy {
+        library.td_json_client_create()?.also { createdClient = it }
+            ?: error("TDLib berhasil dimuat tetapi gagal membuat klien.")
+    }
 
     override fun send(query: String) {
         val pointer = client ?: return
@@ -44,7 +52,11 @@ private class DesktopTdJsonClient : TdJsonClient {
     }
 
     override fun close() {
-        client?.let { library.td_json_client_destroy(it) }
+        // Do not touch the lazy `client`: a session that failed to load the
+        // native must still be closable without trying to load it again.
+        val pointer = createdClient ?: return
+        createdClient = null
+        runCatching { library.td_json_client_destroy(pointer) }
     }
 
     private fun loadLibrary(): TdJsonLibrary {
@@ -52,10 +64,17 @@ private class DesktopTdJsonClient : TdJsonClient {
 
         val extracted = extractBundledLibrary()
             ?: error(
-                "libtdjson tidak ditemukan: pasang artefak tdlight-natives untuk OS ini " +
-                    "atau set -Djna.library.path",
+                "Pustaka TDLib (libtdjson) tidak ditemukan. Paket desktop resmi sudah " +
+                    "menyertakannya; untuk build lokal jalankan " +
+                    "scripts/fetch-tdlib-desktop.sh lalu build ulang.",
             )
-        return Native.load(extracted.absolutePath, TdJsonLibrary::class.java)
+        return runCatching { Native.load(extracted.absolutePath, TdJsonLibrary::class.java) }
+            .getOrElse { failure ->
+                error(
+                    "Pustaka TDLib ditemukan tetapi gagal dimuat: " +
+                        (failure.message ?: failure::class.simpleName),
+                )
+            }
     }
 
     private fun extractBundledLibrary(): File? {

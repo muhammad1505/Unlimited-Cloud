@@ -5,7 +5,8 @@
 - JDK 17 (CI memakai Temurin 17).
 - Android SDK dengan `platforms;android-37` dan `build-tools;36.0.0`.
 - Python 3 untuk skrip pemeriksaan.
-- Desktop: Linux dengan GTK/X11 (atau Windows/macOS) dan native TDLib yang sesuai.
+- Desktop: Linux x86_64 dengan GTK/X11, atau Windows x86_64. Native TDLib
+  diunduh oleh skrip di bawah; macOS belum punya aset terpin.
 
 Di Termux/Android tanpa SDK dan RAM memadai, jangan menjalankan Gradle. Gunakan
 `scripts/preflight.py` + CI seperti dijelaskan di [AGENTS.md](../AGENTS.md).
@@ -41,10 +42,29 @@ memverifikasi SHA-256, lalu menyalin `libtdjson.so` ke
 `androidApp/src/main/jniLibs/<abi>/`. Direktori itu di-ignore Git karena ukurannya
 20–30 MB per ABI.
 
+## Native TDLib Desktop
+
+```bash
+bash scripts/fetch-tdlib-desktop.sh
+```
+
+Skrip mengunduh TDLib 1.8.71 dari rilis `AlexXanderGrib/prebuilt-tdlib`
+(`libtdjson-x64-glibc.so` di Linux x86_64, `tdjson-x64.dll` di Windows x86_64),
+memverifikasi SHA-256, lalu menyalinnya sebagai `libtdjson.so` / `tdjson.dll` ke
+`composeApp/src/desktopMain/resources/`. Folder itu di-ignore Git.
+
+Task `createDistributable`, `packageDeb`, `packageRpm`, dan `packageMsi`
+berhenti dengan pesan yang jelas bila native belum ada; CI menjalankan skrip ini
+sebelum packaging. Paket deb/rpm/msi membundel native tersebut sehingga instalasi
+tidak perlu memasang TDLib terpisah. `:composeApp:run` juga memerlukannya.
+macOS bukan target paket; untuk menjalankan lokal, tunjuk library TDLib sendiri
+lewat `-Djna.library.path`.
+
 ## Perintah umum
 
 ```bash
-# Desktop
+# Desktop (ambil native sekali setelah clone)
+bash scripts/fetch-tdlib-desktop.sh
 ./gradlew :composeApp:run
 
 # APK debug
@@ -58,10 +78,12 @@ memverifikasi SHA-256, lalu menyalin `libtdjson.so` ke
 ./gradlew.bat :composeApp:packageMsi
 ```
 
-Paket desktop tidak membundel native TDLib. `it.tdlight` hanya menerbitkan
-wrapper JNI (`tdjni`), bukan `tdjson`, sehingga `libtdjson.so`/`tdjson.dll`
-dipasang terpisah dan ditunjuk lewat `-Djna.library.path` (atau diletakkan di
-`PATH`).
+APK release dinamai seperti paket desktop:
+`UnlimitedCloud-<versi>-arm64-v8a.apk`, bukan `androidApp-release.apk`.
+
+Paket desktop membundel native TDLib dari `scripts/fetch-tdlib-desktop.sh`.
+`it.tdlight` tidak dipakai karena hanya menerbitkan wrapper JNI (`tdjni`), bukan
+`tdjson`; transport desktop memakai JSON C API yang sama dengan Android.
 
 ## Signing Android
 
@@ -95,6 +117,11 @@ di-decode menjadi `androidApp/release.keystore`, lalu menghapusnya di akhir job.
 python3 scripts/preflight.py        # import terlarang, bracket, conflict marker
 python3 scripts/check-versions.py   # versi vs changelog vs kode
 python3 -m py_compile scripts/*.py
+
+# Isi paket desktop (native TDLib + ikon merek); jalankan di OS target.
+python3 scripts/check-desktop-package.py \
+  composeApp/build/compose/binaries/main/deb/*.deb \
+  composeApp/build/compose/binaries/main/rpm/*.rpm
 ```
 
 CI menjalankan keduanya plus build release bertanda tangan dan verifikasi
@@ -104,8 +131,10 @@ CI menjalankan keduanya plus build release bertanda tangan dan verifikasi
 
 | Gejala | Penyebab umum | Solusi |
 | --- | --- | --- |
-| `UnsatisfiedLinkError: libtdjson.so` | natives belum diunduh | jalankan `scripts/fetch-tdlib-android.sh`, build ulang |
-| Splash berhenti dengan "belum merespons" | kredensial dummy / tanpa jaringan | isi kredensial, cek koneksi |
+| `UnsatisfiedLinkError: libtdjson.so` | natives Android belum diunduh | jalankan `scripts/fetch-tdlib-android.sh`, build ulang |
+| Desktop: "Pustaka TDLib (libtdjson) tidak ditemukan" | native desktop belum diambil atau gagal dimuat | jalankan `scripts/fetch-tdlib-desktop.sh`, build ulang; di macOS set `-Djna.library.path` |
+| "Kredensial Telegram belum tertanam di build ini" | build memakai fallback dummy | isi `TELEGRAM_API_ID`/`TELEGRAM_API_HASH`, build ulang |
+| Splash berhenti dengan "belum merespons" | native ada tetapi jaringan/TDLib tidak merespons | periksa koneksi, lalu buka ulang aplikasi |
 | `InputFile is not specified` saat unggah | `inputDocument` diganti `inputFileLocal` | pertahankan wrapper `inputDocument` di repository |
 | `Could not find com.android…` | SDK/AGP tidak cocok | pasang `platforms;android-37`, JDK 17 |
 | "Berkas belum tersedia" saat bagikan | unduhan belum selesai / file dihapus | ulangi, tunggu transfer selesai |

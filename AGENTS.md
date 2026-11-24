@@ -21,7 +21,9 @@ backend via **TDLib**.
   `scripts/fetch-tdlib-android.sh`, ignored by Git).
 - `composeApp/src/desktopMain/`: Desktop JVM `actual` implementations (TDLib JSON
   transport through JNA + `libtdjson`, Desktop paths, `JFileChooser`, clipboard
-  share, window entry point).
+  share, window entry point). The deb/rpm/msi bundle `libtdjson` from
+  `src/desktopMain/resources/`, populated by `scripts/fetch-tdlib-desktop.sh`
+  (ignored by Git).
 
 ## 2. CRITICAL Environment Rules (Termux / Mobile Dev)
 

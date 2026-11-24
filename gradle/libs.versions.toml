@@ -13,7 +13,6 @@ filekit = "0.17.1"
 activityCompose = "1.13.0"
 androidxCore = "1.16.0"
 androidxWork = "2.12.0"
-tdlight = "3.5.9+td.1.8.68"
 jna = "5.14.0"
 # Pure-Java audio decoders for the desktop preview (MP3 and FLAC).
 jlayer = "1.0.1"

@@ -27,6 +27,10 @@ Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
 - Navigasi bawah tidak lagi naik ke tengah layar saat kolom pencarian dipilih: bilahnya menempel di dasar, dan selama papan ketik terbuka bilah itu menyelinap pergi sementara daftar berkas yang bergeser memberi ruang untuk mengetik.
 - Topik folder yang berkasnya sudah habis kini terhapus sendiri dari grup Telegram, jadi tidak ada lagi tab kosong yang menumpuk. Topik hanya dihapus setelah seluruh riwayat folder selesai dimuat supaya berkas di halaman lama tidak ikut hilang.
+- Paket desktop deb/rpm/msi kini menyertakan native TDLib yang versinya dipin dan checksum-nya diverifikasi, sehingga login tidak lagi berhenti karena pustaka TDLib tidak ditemukan.
+- Ikon Unlimited Cloud kini juga tampil di launcher dan tray desktop; entri menu Linux punya kategori Utility, dan menutup jendela menyisakan ikon tray untuk membuka lagi atau keluar.
+- Pesan kegagalan login tidak lagi selalu menyalahkan kredensial API: native yang hilang, build tanpa kredensial, dan jaringan yang diam punya penjelasan masing-masing.
+- Berkas APK rilis kini bernama `UnlimitedCloud-1.3.3-arm64-v8a.apk`, seragam dengan paket desktop, bukan nama modul `androidApp`.
 
 ## 1.3.2 — 23 November 2026
 

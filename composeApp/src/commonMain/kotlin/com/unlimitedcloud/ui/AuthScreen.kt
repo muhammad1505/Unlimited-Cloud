@@ -219,7 +219,7 @@ private fun AuthCard(
 
                 is AuthUiState.Ready -> LoadingContent("Menyiapkan ruang kerja…")
 
-                is AuthUiState.Failure -> FailureContent(current.message)
+                is AuthUiState.Failure -> FailureContent(current.message, current.hint)
 
                 AuthUiState.LoggingOut -> LoadingContent("Keluar dari akun…")
 
@@ -783,7 +783,7 @@ private fun LoadingContent(message: String) {
 }
 
 @Composable
-private fun FailureContent(message: String) {
+private fun FailureContent(message: String, hint: String?) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Box(
             modifier = Modifier
@@ -805,10 +805,15 @@ private fun FailureContent(message: String) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        InfoBanner(
-            message = "Periksa konfigurasi TELEGRAM_API_ID dan TELEGRAM_API_HASH, lalu build ulang aplikasi.",
-            isError = true,
-        )
+        // Credentials are only one possible cause. Showing the build hint for a
+        // missing native or an offline network made every desktop startup look
+        // like a broken API_ID secret.
+        hint?.let {
+            InfoBanner(
+                message = it,
+                isError = true,
+            )
+        }
     }
 }
 

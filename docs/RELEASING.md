@@ -62,8 +62,8 @@ push / PR ke main
   ├─ static-checks : preflight, version+changelog, izin, regression guards
   ├─ android       : kompilasi desktop, fetch TDLib arm64, APK release bertanda
   │                  tangan, verifikasi apksigner + daftar izin APK, artefak APK
-  ├─ desktop-linux : packageDeb + packageRpm di Ubuntu
-  └─ desktop-windows: packageMsi di Windows
+  ├─ desktop-linux : fetch native TDLib + packageDeb + packageRpm + verifikasi isi
+  └─ desktop-windows: fetch native TDLib + packageMsi + verifikasi isi
 
 tag vX.Y.Z
   └─ release       : tag harus sama dengan gradle.properties, ambil APK + deb +
@@ -86,12 +86,17 @@ sebelum tag dibuat.
    ```
 
 4. Job release memverifikasi tag, mengunduh APK hasil build `main`, dan
-   mempublikasikan release. Catatan rilis GitHub dibuat otomatis; untuk isi yang
-   sama dengan aplikasi, salin bagian teratas `CHANGELOG.md` bila perlu.
+   mempublikasikan release. APK dirilis sebagai
+   `UnlimitedCloud-<versi>-arm64-v8a.apk`, seragam dengan paket desktop. Catatan
+   rilis GitHub dibuat otomatis; untuk isi yang sama dengan aplikasi, salin
+   bagian teratas `CHANGELOG.md` bila perlu.
 5. Unduh APK dari halaman release dan uji instalasi pada perangkat bersih:
    login, unggah, unduh, bagikan, galeri, simpan foto ke galeri perangkat, sync
    latar belakang (buka Pengaturan → Galeri, lalu tutup aplikasi), baterai,
-   changelog.
+   changelog. Pasang juga deb/msi dan pastikan login desktop berjalan tanpa
+   memasang TDLib terpisah, ikon merek muncul, dan tray bisa membuka/menutup
+   jendela. CI sudah memeriksa isi paket (native TDLib + ikon merek) sebelum
+   artefak diunggah.
 
 ## Checklist Google Play
 

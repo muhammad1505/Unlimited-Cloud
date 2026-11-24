@@ -22,8 +22,6 @@ dependencyResolutionManagement {
             }
         }
         mavenCentral()
-        // TDLight (TDLib JNI wrapper) is published on the MCHV repository.
-        maven("https://mvn.mchv.eu/repository/mchv/")
     }
 }
 
