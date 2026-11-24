@@ -6,7 +6,7 @@ TDLib (missing libtdjson) or still shows the stock Kotlin icon. This check looks
 inside the finished deb/rpm/msi instead of trusting the build steps:
 
 1. Extract the artifact with the platform tool (dpkg-deb, rpm2cpio + cpio, or
-   7z/msiexec).
+   7z/msiexec, which also has to open the cab an msi hides its payload in).
 2. Find `libtdjson.so` (Linux) or `tdjson.dll` (Windows) inside the app jars and
    compare it byte-for-byte with the native fetched for this build.
 3. Find `icon.png` inside the app jars and compare it with the committed brand
@@ -65,12 +65,27 @@ def find_7zip() -> str | None:
         candidate = Path(base) / "7-Zip" / "7z.exe"
         if candidate.is_file():
             return str(candidate)
-    return None
-
-
-def run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
-    print("+ " + " ".join(command))
+    return Nonedef run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
+    print("+" + " ".join(command))
     return subprocess.run(command, check=False)
+
+
+def extract_nested_cabs(root: Path, seven: str, rounds: int = 3) -> None:
+    """Unpacks the cabinet an msi keeps its app image in.
+
+    7z reads the msi container but leaves the payload as a single ``Data.cab``,
+    so the app jar only appears once that cab is opened as well.
+    """
+    for _ in range(rounds):
+        cabs = [entry for entry in root.rglob("*.cab") if entry.is_file()]
+        if not cabs:
+            return
+        for cab in cabs:
+            result = run([seven, "x", "-y", f"-o{root.resolve()}", str(cab.resolve())])
+            if result.returncode != 0:
+                fail(f"{cab.name}: 7z gagal mengekstrak cab msi (exit {result.returncode})")
+            # Removing the cab keeps the next round from unpacking it again.
+            cab.unlink(missing_ok=True)
 
 
 def extract(package: Path, destination: Path) -> str:
@@ -120,6 +135,7 @@ def extract(package: Path, destination: Path) -> str:
             )
             if result.returncode != 0:
                 fail(f"{package.name}: 7z gagal mengekstrak msi (exit {result.returncode})")
+            extract_nested_cabs(destination, seven)
             return kind
 
         msiexec = shutil.which("msiexec")
@@ -166,7 +182,8 @@ def jar_entries(root: Path, names: list[str]) -> dict[str, list[tuple[Path, byte
     """Collects named entries from every jar in the extracted app image."""
     jars = sorted(root.rglob("*.jar"))
     if not jars:
-        fail(f"{root}: tidak ada jar aplikasi di dalam paket")
+        extracted = sum(1 for path in root.rglob("*") if path.is_file())
+        fail(f"{root}: tidak ada jar aplikasi di dalam paket ({extracted} berkas terekstrak)")
 
     found: dict[str, list[tuple[Path, bytes]]] = {name: [] for name in names}
     for jar in jars:
