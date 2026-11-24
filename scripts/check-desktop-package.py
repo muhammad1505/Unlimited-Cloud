@@ -65,8 +65,11 @@ def find_7zip() -> str | None:
         candidate = Path(base) / "7-Zip" / "7z.exe"
         if candidate.is_file():
             return str(candidate)
-    return Nonedef run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
-    print("+" + " ".join(command))
+    return None
+
+
+def run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
+    print("+ " + " ".join(command))
     return subprocess.run(command, check=False)
 
 
