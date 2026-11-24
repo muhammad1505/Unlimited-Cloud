@@ -118,6 +118,35 @@ class ForumTopics(private val session: TdJsonSession) {
         return topicId
     }
 
+    /**
+     * Deletes the topic backing [folder] once the folder no longer has files, so
+     * deleted folders do not linger as empty tabs inside the Telegram group.
+     * Returns true when Telegram removed the topic.
+     */
+    suspend fun remove(chatId: Long, folder: String): Boolean {
+        val name = forumTopicName(folder) ?: return false
+        val topicId = cache[chatId to name] ?: findTopic(chatId, name) ?: return false
+        val response = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "deleteForumTopic")
+                    put("chat_id", chatId)
+                    put("forum_topic_id", topicId)
+                },
+            )
+        }.getOrElse { failure ->
+            logDiagnostic(LOG_TAG, "topik '$name' gagal dihapus: ${failure.message}")
+            return false
+        }
+        if (isError(response)) {
+            logDiagnostic(LOG_TAG, "hapus topik '$name' ditolak TDLib: ${errorMessage(response)}")
+            return false
+        }
+        cache.remove(chatId to name)
+        logDiagnostic(LOG_TAG, "topik '$name' kosong lalu dihapus")
+        return true
+    }
+
     private fun isError(response: JsonObject): Boolean =
         response["@type"]?.jsonPrimitive?.contentOrNull == "error"
 

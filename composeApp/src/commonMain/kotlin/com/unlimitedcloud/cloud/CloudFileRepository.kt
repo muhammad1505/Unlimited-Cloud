@@ -280,6 +280,13 @@ class CloudFileRepository(private val session: TdJsonSession) {
         return if (completed && !path.isNullOrBlank()) path else null
     }
 
+    /**
+     * Deletes the forum topic of [folder] after its last file was removed, so an
+     * empty folder cannot remain as a tab in Telegram.
+     */
+    suspend fun deleteTopic(chatId: Long, folder: String): Boolean =
+        topics.remove(chatId, folder)
+
     suspend fun deleteMessages(chatId: Long, messageIds: List<Long>) {
         if (messageIds.isEmpty()) return
 

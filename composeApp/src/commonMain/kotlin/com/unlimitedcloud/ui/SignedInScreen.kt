@@ -1,10 +1,12 @@
 package com.unlimitedcloud.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -20,6 +22,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -45,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unlimitedcloud.auth.AuthUiState
@@ -132,6 +137,12 @@ fun SignedInScreen(
     val background = MaterialTheme.colorScheme.background
     val ambient = MaterialTheme.colorScheme.primary
 
+    // safeDrawing contains the keyboard inset, which used to shrink the shell and
+    // push the bottom bar up to the middle of the screen as soon as the search
+    // field was focused. The shell now ignores the keyboard: the file area takes
+    // that inset itself and the bar slides away while typing.
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -144,7 +155,7 @@ fun SignedInScreen(
                     ),
                 ),
             )
-            .windowInsetsPadding(WindowInsets.safeDrawing),
+            .windowInsetsPadding(WindowInsets.safeDrawing.exclude(WindowInsets.ime)),
     ) {
         val expanded = maxWidth >= 920.dp
 
@@ -171,7 +182,7 @@ fun SignedInScreen(
 
                 AnimatedContent(
                     targetState = destination,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    modifier = Modifier.weight(1f).fillMaxWidth().imePadding(),
                     transitionSpec = {
                         (
                             fadeIn(animationSpec = tween(220)) +
@@ -225,7 +236,13 @@ fun SignedInScreen(
                     }
                 }
 
-                if (!expanded) {
+                AnimatedVisibility(
+                    visible = !expanded && !keyboardVisible,
+                    enter = fadeIn(animationSpec = tween(160)) +
+                        slideInVertically(animationSpec = tween(160)) { height -> height / 2 },
+                    exit = fadeOut(animationSpec = tween(120)) +
+                        slideOutVertically(animationSpec = tween(120)) { height -> height / 2 },
+                ) {
                     AppBottomBar(
                         section = section,
                         onSelect = selectSection,

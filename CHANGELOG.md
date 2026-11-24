@@ -21,6 +21,13 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.3.3 — 24 November 2026
+
+### Perbaikan
+
+- Navigasi bawah tidak lagi naik ke tengah layar saat kolom pencarian dipilih: bilahnya menempel di dasar, dan selama papan ketik terbuka bilah itu menyelinap pergi sementara daftar berkas yang bergeser memberi ruang untuk mengetik.
+- Topik folder yang berkasnya sudah habis kini terhapus sendiri dari grup Telegram, jadi tidak ada lagi tab kosong yang menumpuk. Topik hanya dihapus setelah seluruh riwayat folder selesai dimuat supaya berkas di halaman lama tidak ikut hilang.
+
 ## 1.3.2 — 23 November 2026
 
 ### Perbaikan

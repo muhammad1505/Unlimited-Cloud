@@ -572,6 +572,11 @@ class CloudFilesViewModel(
                 .onSuccess {
                     val removed = files.mapTo(mutableSetOf()) { it.messageId }
                     logDiagnostic(LOG_TAG, "hapus selesai: ${files.size} berkas")
+                    // Folders the deleted files belonged to. Their topic is only
+                    // removed when the whole history is in memory: an unloaded page
+                    // may still hold files that would otherwise be lost with it.
+                    val touchedFolders = files.mapNotNull { it.folder }.distinct()
+                    val historyComplete = !state.value.canLoadMore
                     state.update { current ->
                         val remaining = current.files.filterNot { it.messageId in removed }
                         current.copy(
@@ -586,6 +591,33 @@ class CloudFilesViewModel(
                                 "${files.size} berkas dihapus"
                             },
                         )
+                    }
+
+                    if (historyComplete) {
+                        val left = state.value.files
+                        val emptied = touchedFolders.filter { folder ->
+                            left.none { it.folder == folder }
+                        }
+                        val deleted = emptied.filter { folder ->
+                            runCatching { repository.deleteTopic(chatId, folder) }
+                                .getOrElse { failure ->
+                                    logDiagnostic(
+                                        LOG_TAG,
+                                        "topik '$folder' gagal dihapus: ${failure.message}",
+                                    )
+                                    false
+                                }
+                        }
+                        if (deleted.isNotEmpty()) {
+                            state.update { current ->
+                                current.copy(
+                                    status = listOfNotNull(
+                                        current.status,
+                                        "topik ${deleted.joinToString(", ") { "'$it'" }} dihapus",
+                                    ).joinToString(" · "),
+                                )
+                            }
+                        }
                     }
                 }
                 .onFailure { failure ->
