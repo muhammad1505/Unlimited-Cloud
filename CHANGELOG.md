@@ -21,6 +21,20 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.3.8 — 26 November 2026
+
+### Baru
+
+- Menu Berkas kini berupa pohon folder bertingkat yang bisa dilipat. Folder yang punya subfolder menampilkan panah lipat, dan mengetuk barisnya membuka atau menutup cabangnya.
+- Dialog Unggah kini menerima banyak berkas sekaligus; berkas diunggah berurutan dalam satu antrean agar daftar transfer tetap mudah dibaca. Memilih satu folder dari perangkat juga menyalin seluruh isinya dan membuat ulang struktur subfoldernya, misalnya Liburan/Pantai.
+- Setiap unggahan dan unduhan melapor lewat notifikasi sistem Android saat selesai atau gagal, sehingga hasilnya tetap terlihat walau aplikasi sedang di latar belakang. Ketuk notifikasi untuk membuka aplikasi.
+
+### Perbaikan
+
+- Folder induk yang hanya berisi subfolder kini tetap muncul di pohon, lengkap dengan jumlah berkas dari seluruh isinya, sehingga struktur seperti Liburan/Pantai bisa ditelusuri dari atas.
+- Membuka folder kini sekaligus menampilkan berkas di dalam subfoldernya; sebelumnya folder induk terbuka kosong karena hanya berkas dengan path yang sama persis yang dihitung.
+- Baris chip folder di atas daftar hanya menampilkan cabang teratas, jadi path panjang tidak lagi memenuhi layar.
+
 ## 1.3.7 — 24 November 2026
 
 ### Baru
