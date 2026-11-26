@@ -51,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -371,7 +372,6 @@ fun FilesScreen(
 
                 showingFolders -> FolderBrowser(
                     state = state,
-                    expanded = expanded,
                     onOpenFolder = { folder ->
                         browsingFolders = false
                         viewModel.selectFolder(folder)
@@ -570,7 +570,13 @@ private fun FolderChips(
             selected = state.selectedFolder == null,
             onClick = { onSelect(null) },
         )
-        state.folders.forEach { folder ->
+        // Only the top of each branch gets a chip; nested folders live in the
+        // tree and their branch chip already covers them.
+        val branches = state.folders
+            .map { it.substringBefore('/') }
+            .distinct()
+            .sorted()
+        branches.forEach { folder ->
             FolderChip(
                 label = folder,
                 count = state.folderCount(folder),
@@ -609,29 +615,24 @@ private fun FolderChip(
 }
 
 /**
- * The Berkas tab landing view: one compact tile per folder instead of a flat
- * feed of every file. Tapping a tile opens that folder's files.
+ * The Berkas tab landing view. Folder paths such as "Liburan/Pantai" form a
+ * tree: tapping a branch folds it open or shut, and the arrow on the right opens
+ * the folder with every file beneath it.
  */
 @Composable
 private fun FolderBrowser(
     state: ExplorerUiState,
-    expanded: Boolean,
     onOpenFolder: (String?) -> Unit,
 ) {
-    // A folder only exists as the caption of its messages, so the tiles are
-    // built from the loaded files; "Tanpa folder" collects the files uploaded
-    // without a folder.
-    val entries = remember(state.files, state.folders) {
-        buildList<Pair<String?, List<CloudFile>>> {
-            val root = state.files.filter { it.folder == null }
-            if (root.isNotEmpty()) add(null to root)
-            state.folders.forEach { folder ->
-                add(folder to state.files.filter { it.folder == folder })
-            }
-        }
-    }
+    // A folder only exists as the caption of its messages, so the tree is built
+    // from the loaded files; "Tanpa folder" collects the files uploaded without
+    // a folder.
+    val tree = remember(state.files) { buildFolderTree(state.files) }
+    val looseFiles = remember(state.files) { state.files.filter { it.folder == null } }
+    var expandedPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val rows = remember(tree, expandedPaths) { flattenFolders(tree, expandedPaths) }
 
-    if (entries.isEmpty()) {
+    if (tree.isEmpty() && looseFiles.isEmpty()) {
         EmptyState(
             icon = AppIcons.Cloud,
             title = "Belum ada berkas",
@@ -641,35 +642,142 @@ private fun FolderBrowser(
         return
     }
 
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = if (expanded) 240.dp else 160.dp),
+    LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
         contentPadding = PaddingValues(bottom = 96.dp),
     ) {
-        gridItems(entries, key = { it.first ?: "\u0000root" }) { (folder, files) ->
-            FolderTile(
-                name = folder ?: "Tanpa folder",
-                fileCount = files.size,
-                bytes = files.sumOf { it.size },
-                onClick = { onOpenFolder(folder) },
+        if (looseFiles.isNotEmpty()) {
+            item(key = "\u0000root") {
+                FolderTreeRow(
+                    name = "Tanpa folder",
+                    fileCount = looseFiles.size,
+                    bytes = looseFiles.sumOf { it.size },
+                    subfolderCount = 0,
+                    depth = 0,
+                    expandable = false,
+                    expanded = false,
+                    onToggle = {},
+                    onOpen = { onOpenFolder(null) },
+                )
+            }
+        }
+
+        items(rows, key = { it.node.path }) { row ->
+            FolderTreeRow(
+                name = row.node.name,
+                fileCount = row.node.totalFiles,
+                bytes = row.node.totalBytes,
+                subfolderCount = row.node.children.size,
+                depth = row.depth,
+                expandable = row.node.children.isNotEmpty(),
+                expanded = row.node.path in expandedPaths,
+                onToggle = {
+                    expandedPaths = if (row.node.path in expandedPaths) {
+                        expandedPaths - row.node.path
+                    } else {
+                        expandedPaths + row.node.path
+                    }
+                },
+                onOpen = { onOpenFolder(row.node.path) },
             )
         }
     }
 }
 
+/** One folder of the path tree; [path] is the full caption ("Liburan/Pantai"). */
+private data class FolderNode(
+    val name: String,
+    val path: String,
+    val fileCount: Int,
+    val bytes: Long,
+    val children: List<FolderNode>,
+) {
+    val totalFiles: Int = fileCount + children.sumOf { it.totalFiles }
+    val totalBytes: Long = bytes + children.sumOf { it.totalBytes }
+}
+
+private data class FolderRow(val node: FolderNode, val depth: Int)
+
+/** Intermediate nodes are synthesized so a folder holding only subfolders shows up too. */
+private fun buildFolderTree(files: List<CloudFile>): List<FolderNode> {
+    val root = FolderTreeBuilder(name = "", path = "")
+
+    fun builderFor(path: String): FolderTreeBuilder {
+        var node = root
+        path.split('/')
+            .filter { it.isNotBlank() }
+            .forEach { segment -> node = node.child(segment.trim()) }
+        return node
+    }
+
+    files.forEach { file ->
+        val folder = file.folder ?: return@forEach
+        val node = builderFor(folder)
+        node.fileCount += 1
+        node.bytes += file.size
+    }
+
+    return root.sortedChildren()
+}
+
+private class FolderTreeBuilder(val name: String, val path: String) {
+    var fileCount: Int = 0
+    var bytes: Long = 0
+    private val children = mutableMapOf<String, FolderTreeBuilder>()
+
+    fun child(segment: String): FolderTreeBuilder = children.getOrPut(segment) {
+        FolderTreeBuilder(
+            name = segment,
+            path = if (path.isEmpty()) segment else "$path/$segment",
+        )
+    }
+
+    fun sortedChildren(): List<FolderNode> = children.values
+        .sortedBy { it.name.lowercase() }
+        .map { child ->
+            FolderNode(
+                name = child.name,
+                path = child.path,
+                fileCount = child.fileCount,
+                bytes = child.bytes,
+                children = child.sortedChildren(),
+            )
+        }
+}
+
+/** Visible rows: a folded node hides its whole subtree. */
+private fun flattenFolders(
+    nodes: List<FolderNode>,
+    expandedPaths: Set<String>,
+    depth: Int = 0,
+): List<FolderRow> = buildList {
+    nodes.forEach { node ->
+        add(FolderRow(node, depth))
+        if (node.children.isNotEmpty() && node.path in expandedPaths) {
+            addAll(flattenFolders(node.children, expandedPaths, depth + 1))
+        }
+    }
+}
+
 @Composable
-private fun FolderTile(
+private fun FolderTreeRow(
     name: String,
     fileCount: Int,
     bytes: Long,
-    onClick: () -> Unit,
+    subfolderCount: Int,
+    depth: Int,
+    expandable: Boolean,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onOpen: () -> Unit,
 ) {
     Surface(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        onClick = if (expandable) onToggle else onOpen,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = (depth * 18).dp),
+        shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(
             width = 1.dp,
@@ -677,14 +785,26 @@ private fun FolderTile(
         ),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+            modifier = Modifier.padding(start = 8.dp, end = 4.dp, top = 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            Box(modifier = Modifier.size(22.dp), contentAlignment = Alignment.Center) {
+                if (expandable) {
+                    Icon(
+                        imageVector = AppIcons.ChevronDown,
+                        contentDescription = if (expanded) "Lipat $name" else "Bentangkan $name",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .rotate(if (expanded) 0f else -90f),
+                    )
+                }
+            }
             Box(
                 modifier = Modifier
-                    .size(34.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(9.dp))
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.11f)),
                 contentAlignment = Alignment.Center,
             ) {
@@ -692,7 +812,7 @@ private fun FolderTile(
                     imageVector = AppIcons.Folder,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(17.dp),
+                    modifier = Modifier.size(16.dp),
                 )
             }
             Column(modifier = Modifier.weight(1f)) {
@@ -703,19 +823,30 @@ private fun FolderTile(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "$fileCount berkas · ${formatBytes(bytes)}",
+                    text = buildString {
+                        append(fileCount)
+                        append(" berkas · ")
+                        append(formatBytes(bytes))
+                        if (subfolderCount > 0) {
+                            append(" · ")
+                            append(subfolderCount)
+                            append(" subfolder")
+                        }
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Icon(
-                imageVector = AppIcons.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp),
-            )
+            IconButton(onClick = onOpen, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    imageVector = AppIcons.ChevronRight,
+                    contentDescription = "Buka $name",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }

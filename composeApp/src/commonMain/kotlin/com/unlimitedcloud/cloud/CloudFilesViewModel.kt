@@ -92,8 +92,11 @@ data class ExplorerUiState(
     val visibleFiles: List<CloudFile>
         get() {
             visibleFilesCache?.let { return it }
+            // Subfolders are stored as paths ("Liburan/Pantai"), so opening a
+            // folder also shows the files of everything beneath it. Without this
+            // a parent that only holds subfolders would open empty.
             val filtered = files.filter { file ->
-                (selectedFolder == null || file.folder == selectedFolder) &&
+                (selectedFolder == null || file.inFolder(selectedFolder)) &&
                     (query.isBlank() || file.name.contains(query.trim(), ignoreCase = true))
             }
             val sorted = when (sort) {
@@ -116,7 +119,13 @@ data class ExplorerUiState(
     val finishedTransfers: List<TransferItem>
         get() = transfers.filter { it.status != TransferStatus.Running }
 
-    fun folderCount(folder: String): Int = files.count { it.folder == folder }
+    fun folderCount(folder: String): Int = files.count { it.inFolder(folder) }
+}
+
+/** True for a file stored directly in [folder] or in one of its subfolders. */
+private fun CloudFile.inFolder(folder: String): Boolean {
+    val path = this.folder ?: return false
+    return path == folder || path.startsWith("$folder/")
 }
 
 /**
