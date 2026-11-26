@@ -28,7 +28,7 @@ actual fun rememberLocalFolderPicker(onPicked: (LocalFolderSelection?) -> Unit):
             result(null)
             return@rememberLauncherForActivityResult
         }
-        // Copying a folder of up to 200 files takes long enough that doing it on
+        // Copying a tree of up to 500 files takes long enough that doing it on
         // the main thread froze the UI (and could trip an ANR).
         scope.launch {
             val selection = withContext(Dispatchers.IO) {
@@ -43,8 +43,9 @@ actual fun rememberLocalFolderPicker(onPicked: (LocalFolderSelection?) -> Unit):
 
 /**
  * Copies the picked SAF tree into the cache so TDLib can upload from plain
- * paths. Bounded by [MAX_FILES] and [MAX_DEPTH] so a huge tree cannot fill the
- * cache or stall the picker.
+ * paths, mirroring the subfolders into nested cache directories. Bounded by
+ * [MAX_FILES] and [MAX_DEPTH] so a huge tree cannot fill the cache or stall the
+ * picker.
  *
  * Every pick gets its own directory and every file a unique name: two files with
  * the same display name (common across sub-folders) used to overwrite each other,
@@ -61,17 +62,31 @@ private fun copyFolderToCache(context: Context, treeUri: Uri): LocalFolderSelect
         "${name.safeFileName()}-${System.currentTimeMillis()}",
     ).apply { mkdirs() }
 
-    val collected = mutableListOf<String>()
-    copyChildren(context, treeUri, rootId, targetDirectory, collected, depth = 0)
+    val collected = mutableListOf<LocalFolderFile>()
+    copyChildren(
+        context = context,
+        treeUri = treeUri,
+        parentDocumentId = rootId,
+        targetDirectory = targetDirectory,
+        relativeDirectory = "",
+        collected = collected,
+        depth = 0,
+    )
     return LocalFolderSelection(name = name, files = collected)
 }
 
+/**
+ * Recurses into subfolders and records each file's path relative to the picked
+ * root, so the upload can recreate `Liburan/Pantai/foto.jpg` instead of putting
+ * everything in one folder.
+ */
 private fun copyChildren(
     context: Context,
     treeUri: Uri,
     parentDocumentId: String,
     targetDirectory: File,
-    collected: MutableList<String>,
+    relativeDirectory: String,
+    collected: MutableList<LocalFolderFile>,
     depth: Int,
 ) {
     if (depth > MAX_DEPTH || collected.size >= MAX_FILES) return
@@ -97,25 +112,41 @@ private fun copyChildren(
                 val mimeType = cursor.getString(2).orEmpty()
 
                 if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    val childDirectory = displayName.safeFileName()
                     copyChildren(
                         context = context,
                         treeUri = treeUri,
                         parentDocumentId = documentId,
                         targetDirectory = targetDirectory,
+                        relativeDirectory = if (relativeDirectory.isEmpty()) {
+                            childDirectory
+                        } else {
+                            "$relativeDirectory/$childDirectory"
+                        },
                         collected = collected,
                         depth = depth + 1,
                     )
                     continue
                 }
 
-                val target = uniqueTarget(targetDirectory, displayName)
+                val directory = File(targetDirectory, relativeDirectory).apply { mkdirs() }
+                val target = uniqueTarget(directory, displayName)
                 val sourceUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
                 val copied = runCatching {
                     context.contentResolver.openInputStream(sourceUri)?.use { input ->
                         target.outputStream().use { output -> input.copyTo(output) }
                     } != null
                 }.getOrDefault(false)
-                if (copied) collected += target.absolutePath
+                if (copied) {
+                    collected += LocalFolderFile(
+                        relativePath = if (relativeDirectory.isEmpty()) {
+                            target.name
+                        } else {
+                            "$relativeDirectory/${target.name}"
+                        },
+                        localPath = target.absolutePath,
+                    )
+                }
             }
         }
     }
@@ -162,6 +193,6 @@ private fun documentName(context: Context, treeUri: Uri, documentId: String): St
 private fun String.safeFileName(): String =
     substringAfterLast('/').substringAfterLast('\\').replace(':', '_').ifBlank { "berkas" }
 
-private const val MAX_DEPTH = 4
-private const val MAX_FILES = 200
+private const val MAX_DEPTH = 8
+private const val MAX_FILES = 500
 private const val MAX_CACHE_AGE_MILLIS = 24L * 60 * 60 * 1000

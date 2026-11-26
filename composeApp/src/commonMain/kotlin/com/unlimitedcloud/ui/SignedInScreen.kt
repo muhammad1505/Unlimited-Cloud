@@ -61,6 +61,7 @@ import com.unlimitedcloud.cloud.CloudFilesViewModel
 import com.unlimitedcloud.cloud.ExplorerUiState
 import com.unlimitedcloud.log.LogStore
 import com.unlimitedcloud.platform.PlatformBackHandler
+import com.unlimitedcloud.platform.rememberNotificationPermissionRequest
 import com.unlimitedcloud.ui.components.AppAvatar
 import com.unlimitedcloud.ui.components.AppIcons
 import com.unlimitedcloud.ui.components.BrandMark
@@ -135,6 +136,12 @@ fun SignedInScreen(
         // picked; it runs once when the signed-in shell first appears.
         viewModel.syncGallery(auto = true)
     }
+
+    // Android 13+ asks once, after the user is signed in. Without the grant the
+    // in-app banner still reports every process; only the system notification
+    // stays silent, so a refusal costs nothing.
+    val requestNotificationPermission = rememberNotificationPermissionRequest()
+    LaunchedEffect(Unit) { requestNotificationPermission() }
 
     // Entering Berkas refreshes the list, so a file uploaded from another device
     // or by the background photo sync shows up without a manual pull.

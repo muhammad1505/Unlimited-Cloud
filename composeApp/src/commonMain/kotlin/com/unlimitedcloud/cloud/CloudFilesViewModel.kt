@@ -8,6 +8,8 @@ import com.unlimitedcloud.platform.GalleryFolder
 import com.unlimitedcloud.platform.GallerySyncSource
 import com.unlimitedcloud.platform.LocalFolderSelection
 import com.unlimitedcloud.platform.MediaSaver
+import com.unlimitedcloud.platform.TransferNotifier
+import com.unlimitedcloud.platform.createTransferNotifier
 import com.unlimitedcloud.platform.createUploadThumbnail
 import com.unlimitedcloud.settings.AppPreferences
 import kotlinx.coroutines.CoroutineScope
@@ -151,6 +153,12 @@ class CloudFilesViewModel(
     init {
         refreshBackgroundSchedule()
     }
+
+    /**
+     * Final transfer results go to the system notification shade where the
+     * platform has one; the in-app banner stays the foreground feedback.
+     */
+    private val notifier: TransferNotifier = createTransferNotifier()
 
     private var transferCounter = 0L
     private var refreshJob: Job? = null
@@ -301,63 +309,71 @@ class CloudFilesViewModel(
         state.update { it.copy(error = message, status = null) }
     }
 
+    /** One file waiting its turn, with the folder it will land in. */
+    private data class UploadRequest(val localPath: String, val folder: String?)
+
     fun upload(localPath: String, folder: String?) {
-        val id = "transfer-${++transferCounter}"
-        val fileName = localPath.substringAfterLast('/').substringAfterLast('\\').ifBlank { "berkas" }
-        val normalizedFolder = folder?.trim()?.takeIf { it.isNotEmpty() }
-        logDiagnostic(LOG_TAG, "unggah mulai: $fileName → ${normalizedFolder ?: "(root)"}")
-
-        state.update {
-            it.copy(
-                transfers = (listOf(
-                    TransferItem(
-                        id = id,
-                        fileName = fileName,
-                        direction = TransferDirection.Upload,
-                        progress = 0f,
-                    ),
-                ) + it.transfers).trimTransfers(),
-                status = "Mengunggah $fileName…",
-                error = null,
-            )
-        }
-
-        scope.launch {
-            val chatId = channelManager.ensureRootChannel()
-            if (chatId == null) {
-                failTransfer(id, "Penyimpanan belum siap")
-                return@launch
-            }
-
-            uploadFile(id, chatId, localPath, normalizedFolder)
-                .onSuccess {
-                    logDiagnostic(LOG_TAG, "unggah selesai: $fileName")
-                    state.update { it.copy(status = "Unggahan $fileName selesai") }
-                    refresh()
-                }
-                .onFailure { failure ->
-                    failTransfer(id, failure.message ?: "Unggahan gagal")
-                }
-        }
+        startUploads(
+            requests = listOf(UploadRequest(localPath, normalizeFolder(folder))),
+            summary = null,
+        )
     }
 
     /**
-     * Uploads every file of a picked folder into one virtual folder. Progress is
-     * tracked per file, so the Transfer tab lists them like single uploads.
+     * Uploads every picked file, one after another. A sequential run keeps the
+     * Transfer list readable and avoids a burst of parallel TDLib uploads on a
+     * mobile connection.
+     */
+    fun uploadMany(paths: List<String>, folder: String?) {
+        val unique = paths.distinct()
+        if (unique.isEmpty()) return
+        val target = normalizeFolder(folder)
+        startUploads(
+            requests = unique.map { path -> UploadRequest(path, target) },
+            summary = "${unique.size} berkas",
+        )
+    }
+
+    /**
+     * Uploads a picked folder and recreates its subfolders as folders of the
+     * same name ("Liburan/Pantai"): every file keeps the path it had on disk,
+     * relative to the picked root.
      */
     fun uploadFolder(selection: LocalFolderSelection, folder: String?) {
         if (selection.files.isEmpty()) {
             reportError("Folder ${selection.name} tidak berisi berkas")
             return
         }
-        val target = folder?.trim()?.takeIf { it.isNotEmpty() } ?: selection.name
+        val base = normalizeFolder(folder) ?: selection.name.ifBlank { "folder" }
         logDiagnostic(
             LOG_TAG,
-            "unggah folder: ${selection.name} (${selection.files.size} berkas) → $target",
+            "unggah folder: ${selection.name} (${selection.files.size} berkas) → $base",
         )
+        startUploads(
+            requests = selection.files.map { file ->
+                val relativeDirectory = file.relativePath.substringBeforeLast('/', "")
+                UploadRequest(
+                    localPath = file.localPath,
+                    folder = if (relativeDirectory.isEmpty()) base else "$base/$relativeDirectory",
+                )
+            },
+            summary = "${selection.files.size} berkas dari ${selection.name}",
+        )
+    }
+
+    private fun startUploads(requests: List<UploadRequest>, summary: String?) {
+        if (requests.isEmpty()) return
+        val single = requests.size == 1
+        val first = requests.first().localPath.fileName()
+        val label = if (single) first else "${requests.size} berkas"
+        logDiagnostic(
+            LOG_TAG,
+            "unggah mulai: $label" + if (single) " → ${requests.first().folder ?: "(root)"}" else "",
+        )
+
         state.update {
             it.copy(
-                status = "Mengunggah ${selection.files.size} berkas dari ${selection.name}…",
+                status = if (single) "Mengunggah $first…" else "Mengunggah ${requests.size} berkas…",
                 error = null,
             )
         }
@@ -365,22 +381,23 @@ class CloudFilesViewModel(
         scope.launch {
             val chatId = channelManager.ensureRootChannel()
             if (chatId == null) {
-                reportError("Penyimpanan belum siap")
+                state.update { it.copy(status = null, error = "Penyimpanan belum siap") }
+                notifyTransfer("Unggahan gagal", "Penyimpanan belum siap")
                 return@launch
             }
 
             var uploaded = 0
             var failed = 0
 
-            selection.files.forEach { path ->
+            requests.forEach { request ->
                 val transferId = "transfer-${++transferCounter}"
-                val fileName = path.substringAfterLast('/').substringAfterLast('\\')
+                val name = request.localPath.fileName()
                 state.update { current ->
                     current.copy(
                         transfers = (listOf(
                             TransferItem(
                                 id = transferId,
-                                fileName = fileName.ifBlank { "berkas" },
+                                fileName = name,
                                 direction = TransferDirection.Upload,
                                 progress = 0f,
                             ),
@@ -388,11 +405,14 @@ class CloudFilesViewModel(
                     )
                 }
 
-                uploadFile(transferId, chatId, path, target).fold(
-                    onSuccess = { uploaded++ },
+                uploadFile(transferId, chatId, request.localPath, request.folder).fold(
+                    onSuccess = {
+                        uploaded++
+                        if (single) logDiagnostic(LOG_TAG, "unggah selesai: $name")
+                    },
                     onFailure = { failure ->
                         failed++
-                        logDiagnostic(LOG_TAG, "folder gagal: $fileName: ${failure.message}")
+                        logDiagnostic(LOG_TAG, "unggah gagal: $name: ${failure.message}")
                     },
                 )
             }
@@ -400,15 +420,48 @@ class CloudFilesViewModel(
             if (uploaded > 0) refresh()
             state.update {
                 it.copy(
-                    status = if (uploaded > 0) {
-                        "$uploaded berkas dari ${selection.name} diunggah"
+                    status = when {
+                        single && failed == 0 -> "Unggahan $first selesai"
+                        uploaded > 0 -> "$uploaded berkas diunggah"
+                        else -> null
+                    },
+                    error = if (failed > 0) {
+                        if (single) "$first gagal diunggah" else "$failed berkas gagal diunggah"
                     } else {
                         null
                     },
-                    error = if (failed > 0) "$failed berkas gagal diunggah" else null,
+                )
+            }
+
+            // The system notification is the only result the user sees when the
+            // app is no longer in the foreground.
+            if (failed > 0) {
+                notifyTransfer(
+                    "Unggahan gagal",
+                    if (single) "$first gagal diunggah" else "$failed dari ${requests.size} berkas gagal",
+                )
+            } else {
+                notifyTransfer(
+                    "Unggahan selesai",
+                    if (single) {
+                        "$first tersimpan di Telegram"
+                    } else {
+                        "${summary ?: "$uploaded berkas"} tersimpan di Telegram"
+                    },
                 )
             }
         }
+    }
+
+    private fun normalizeFolder(folder: String?): String? =
+        folder?.trim()?.takeIf { it.isNotEmpty() }
+
+    private fun String.fileName(): String =
+        substringAfterLast('/').substringAfterLast('\\').ifBlank { "berkas" }
+
+    /** System notification for a finished transfer; in-app feedback stays separate. */
+    private fun notifyTransfer(title: String, message: String) {
+        runCatching { notifier.notify(title, message) }
     }
 
     /**
@@ -480,6 +533,7 @@ class CloudFilesViewModel(
                                 ?: "Tersimpan di cache aplikasi: ${file.name}",
                         )
                     }
+                    notifyTransfer("Unduhan selesai", "${file.name} siap dipakai")
                     onDownloaded(path)
                 }
                 .onFailure { failure ->
@@ -1059,6 +1113,7 @@ class CloudFilesViewModel(
     }
 
     private fun failTransfer(id: String, message: String) {
+        val transfer = state.value.transfers.firstOrNull { item -> item.id == id }
         logDiagnostic(LOG_TAG, "transfer gagal: $message")
         updateTransfer(id) {
             it.copy(
@@ -1067,6 +1122,11 @@ class CloudFilesViewModel(
             )
         }
         state.update { it.copy(status = null, error = message) }
+        // Uploads report their own batch result in startUploads; downloads have
+        // no other surface once the app is in the background.
+        if (transfer?.direction == TransferDirection.Download) {
+            notifyTransfer("Unduhan gagal", "${transfer.fileName}: $message")
+        }
     }
 
     /**

@@ -29,8 +29,8 @@ from pathlib import Path
 # permission on WorkManager's JobService (not a user prompt).
 # DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION is androidx.core's app-defined
 # signature permission that guards runtime-registered receivers.
-#
-# No storage/media, foreground-service, or notification permission belongs here.
+# POST_NOTIFICATIONS is the single runtime prompt: transfer results are posted to
+# the shade unless the user refuses. No storage/media permission belongs here.
 ALLOWED = {
     "INTERNET",
     "ACCESS_NETWORK_STATE",
@@ -38,6 +38,7 @@ ALLOWED = {
     "RECEIVE_BOOT_COMPLETED",
     "BIND_JOB_SERVICE",
     "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+    "POST_NOTIFICATIONS",
 }
 
 # Names that must not appear anywhere in the packaged manifest. Prefix matching
@@ -51,7 +52,6 @@ FORBIDDEN_MARKERS = (
     "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
     "android.permission.DUMP",
     "android.permission.FOREGROUND_SERVICE",
-    "android.permission.POST_NOTIFICATIONS",
     "android.permission.REQUEST_INSTALL_PACKAGES",
     "android.permission.SYSTEM_ALERT_WINDOW",
     "android.permission.QUERY_ALL_PACKAGES",

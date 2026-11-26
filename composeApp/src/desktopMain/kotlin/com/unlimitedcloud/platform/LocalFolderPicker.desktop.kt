@@ -26,9 +26,15 @@ actual fun rememberLocalFolderPicker(onPicked: (LocalFolderSelection?) -> Unit):
     }
 }
 
-private fun File.childFiles(limit: Int = 200): List<String> =
+/** Every file under [root], keeping the subfolder as a `/`-separated prefix. */
+private fun File.childFiles(limit: Int = 500): List<LocalFolderFile> =
     walkTopDown()
         .filter { it.isFile }
         .take(limit)
-        .map { it.absolutePath }
+        .map { file ->
+            LocalFolderFile(
+                relativePath = file.relativeTo(this).path.replace(File.separatorChar, '/'),
+                localPath = file.absolutePath,
+            )
+        }
         .toList()

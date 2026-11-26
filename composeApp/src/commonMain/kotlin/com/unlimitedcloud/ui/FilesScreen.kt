@@ -130,9 +130,9 @@ fun FilesScreen(
         selectedIds = selectedIds + file.messageId
     }
 
-    val picker = rememberLocalFilePicker { path ->
-        if (path != null) {
-            viewModel.upload(path, uploadFolder)
+    val picker = rememberLocalFilePicker { paths ->
+        if (paths.isNotEmpty()) {
+            viewModel.uploadMany(paths, uploadFolder)
         }
     }
 
@@ -1318,7 +1318,7 @@ private fun UploadDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Unggah berkas", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            text = "Pilih folder tujuan, lalu unggah satu berkas atau seluruh folder.",
+                            text = "Pilih folder tujuan, lalu unggah beberapa berkas sekaligus atau seluruh folder beserta subfoldernya.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
