@@ -21,6 +21,13 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.4.7 — 27 November 2026
+
+### Perbaikan
+
+- Pratinjau berkas yang baru diunggah tidak lagi macet atau menampilkan "tidak bisa ditampilkan". Setelah salinan sementara dihapus, TDLib masih menunjuk jalur itu; catatan lokalnya sekarang dibersihkan sehingga berkas diunduh ulang dari Telegram.
+- Unduhan yang menemukan jalur lokalnya sudah hilang mencoba sekali lagi secara otomatis sebelum melaporkan gagal, bukan menyerahkan jalur yang tidak ada.
+
 ## 1.4.6 — 27 November 2026
 
 ### Baru

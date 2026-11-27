@@ -20,6 +20,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import okio.FileSystem
+import okio.Path.Companion.toPath
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.TimeSource
 
@@ -223,16 +225,7 @@ class CloudFileRepository(private val session: TdJsonSession) {
         priority: Int = 16,
         onProgress: (Float?) -> Unit = {},
     ): String {
-        session.call(
-            buildJsonObject {
-                put("@type", "downloadFile")
-                put("file_id", fileId)
-                put("priority", priority)
-                put("offset", 0)
-                put("limit", 0)
-                put("synchronous", false)
-            },
-        ).let(::requireOk)
+        requestDownload(fileId, priority)
 
         // A fixed ten minute budget failed large files on slow connections while
         // TDLib was still making progress. Watch the progress itself instead: a
@@ -241,6 +234,10 @@ class CloudFileRepository(private val session: TdJsonSession) {
         var lastDownloaded = -1L
         var lastProgressAt = TimeSource.Monotonic.markNow()
         var path = ""
+        // TDLib can list a completed copy whose bytes the app already removed
+        // after uploading. Such a record is dropped once and the bytes are asked
+        // for again; a second dead record is reported instead of looping.
+        var staleRecords = 0
         while (path.isEmpty()) {
             val file = session.call(
                 buildJsonObject {
@@ -271,7 +268,17 @@ class CloudFileRepository(private val session: TdJsonSession) {
             }
 
             if (completed && !candidate.isNullOrBlank()) {
-                path = candidate
+                if (FileSystem.SYSTEM.exists(candidate.toPath())) {
+                    path = candidate
+                } else if (staleRecords < MAX_STALE_LOCAL_RETRIES) {
+                    staleRecords++
+                    logDiagnostic(LOG_TAG, "salinan lokal hilang, unduh ulang file $fileId")
+                    forgetLocalFile(fileId)
+                    requestDownload(fileId, priority)
+                    delay(POLL_INTERVAL_MILLIS)
+                } else {
+                    error("Salinan lokal berkas ini sudah dibersihkan dan tidak bisa diunduh ulang.")
+                }
             } else {
                 delay(POLL_INTERVAL_MILLIS)
             }
@@ -305,8 +312,45 @@ class CloudFileRepository(private val session: TdJsonSession) {
         val local = file["local"]?.jsonObject ?: return null
         val completed = local["is_downloading_completed"]?.jsonPrimitive?.booleanOrNull == true
         val path = local["path"]?.jsonPrimitive?.contentOrNull
-        return if (completed && !path.isNullOrBlank()) path else null
+        if (!completed || path.isNullOrBlank()) return null
+        if (FileSystem.SYSTEM.exists(path.toPath())) return path
+        // The app removes its upload copy once Telegram has the file, but TDLib
+        // keeps pointing at that path. Handing it to the preview showed a file
+        // that was no longer there, so the record is dropped instead.
+        logDiagnostic(LOG_TAG, "catatan lokal basi untuk file $fileId, dibersihkan")
+        forgetLocalFile(fileId)
+        return null
     }
+
+    /** Asks TDLib to start downloading [fileId] into its own cache. */
+    private suspend fun requestDownload(fileId: Int, priority: Int) {
+        session.call(
+            buildJsonObject {
+                put("@type", "downloadFile")
+                put("file_id", fileId)
+                put("priority", priority)
+                put("offset", 0)
+                put("limit", 0)
+                put("synchronous", false)
+            },
+        ).let(::requireOk)
+    }
+
+    /**
+     * Drops TDLib's local record of a file whose bytes are gone (the upload copy
+     * the app deleted). Without this, TDLib still answered `is_downloading_completed`
+     * with the old path, so previews of freshly uploaded files never loaded.
+     */
+    suspend fun forgetLocalFile(fileId: Int): Boolean = runCatching {
+        val response = session.call(
+            buildJsonObject {
+                put("@type", "deleteFile")
+                put("file_id", fileId)
+            },
+        )
+        requireOk(response)
+        true
+    }.getOrDefault(false)
 
     /**
      * Moves a message that carries no folder caption into the topic of [folder].
@@ -503,6 +547,9 @@ class CloudFileRepository(private val session: TdJsonSession) {
         const val UPLOAD_TIMEOUT_MILLIS = 900_000L
         const val POLL_INTERVAL_MILLIS = 750L
         const val PROGRESS_POLL_MILLIS = 500L
+
+        /** How often a dead local record is forgiven before the download fails. */
+        const val MAX_STALE_LOCAL_RETRIES = 1
 
         /** A download that stops growing for this long is treated as broken. */
         val DOWNLOAD_STALL_TIMEOUT = 5.minutes

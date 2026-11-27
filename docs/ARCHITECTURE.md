@@ -146,6 +146,13 @@ tiga direktori cache unggahan (`uploads`, `gallery-sync`, `group-photo`) dan
 tidak menyentuh direktori TDLib, jadi membersihkan cache tidak pernah merusak
 sesi Telegram.
 
+Karena unggahan memakai `inputFileLocal`, TDLib tetap mencatat jalur salinan
+sementara yang kemudian dihapus aplikasi (opsi hapus salinan, atau `release()`
+sinkron galeri). `cachedFilePath` dan `download` di repository memeriksa apakah
+jalur itu masih ada; kalau tidak, `deleteFile` dipanggil untuk membuang catatan
+basi lalu berkas diunduh ulang dari Telegram. Tanpa ini pratinjau berkas yang
+baru diunggah menerima jalur yang sudah tidak ada.
+
 Batch transfer tidak lagi bergantung pada umur Activity: dijalankan lewat
 `launchBatch`, yang memanggil `TransferSession.begin()`/`end()`. Di Android
 `TransferSession` menyalakan `TransferService` (`foregroundServiceType="dataSync"`)
