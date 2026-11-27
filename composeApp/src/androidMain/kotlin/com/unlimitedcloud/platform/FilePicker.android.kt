@@ -15,6 +15,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Both pickers copy what the user chose into the cache before uploading. */
+actual val pickedFilesAreAppCopies: Boolean = true
+
 @Composable
 actual fun rememberImagePicker(onPicked: (String?) -> Unit): () -> Unit {
     val context = AndroidPlatform.requireContext()

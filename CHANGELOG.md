@@ -21,6 +21,18 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.4.3 — 27 November 2026
+
+### Baru
+
+- Pengaturan → Transfer punya sakelar baru "Hapus salinan setelah terunggah". Salinan sementara yang dibuat aplikasi di cache ponsel langsung dihapus begitu unggahan berhasil, jadi penyimpanan tidak penuh oleh sisa unggahan. Berkas asli di folder kamu tidak disentuh.
+- Status dan notifikasi unggahan kini menyebut ruang yang dibebaskan, misalnya "240 MB cache dibersihkan".
+
+### Perbaikan
+
+- Berkas tunggal dan beberapa berkas sekaligus tidak lagi meninggalkan salinan di cache sampai 24 jam; pembersihannya sekarang sama dengan unggahan folder dan sinkron galeri.
+- Di desktop sakelar ditampilkan nonaktif dengan keterangan, karena berkas diunggah langsung dari lokasi aslinya sehingga tidak ada salinan yang perlu dihapus.
+
 ## 1.4.2 — 27 November 2026
 
 ### Baru

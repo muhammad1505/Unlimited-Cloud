@@ -56,6 +56,7 @@ import com.unlimitedcloud.platform.BatteryOptimizationSnapshot
 import com.unlimitedcloud.platform.BatterySettingsDestination
 import com.unlimitedcloud.platform.rememberBatteryOptimizationController
 import com.unlimitedcloud.platform.openTelegramChat
+import com.unlimitedcloud.platform.pickedFilesAreAppCopies
 import com.unlimitedcloud.platform.rememberGalleryFolderPicker
 import com.unlimitedcloud.platform.rememberImagePicker
 import com.unlimitedcloud.settings.MAX_TRANSFER_PARALLELISM
@@ -163,6 +164,7 @@ fun SettingsScreen(
         TransferCard(
             state = filesState,
             onParallelChange = viewModel::setTransferParallelism,
+            onDeleteCopiesChange = viewModel::setDeleteUploadedCopies,
         )
 
         GalleryCard(
@@ -569,6 +571,7 @@ private fun StorageCard(
 private fun TransferCard(
     state: ExplorerUiState,
     onParallelChange: (Int) -> Unit,
+    onDeleteCopiesChange: (Boolean) -> Unit,
 ) {
     SurfaceCard(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(title = "Transfer")
@@ -604,6 +607,22 @@ private fun TransferCard(
                 )
             }
         }
+        Spacer(Modifier.height(12.dp))
+        ToggleRow(
+            title = "Hapus salinan setelah terunggah",
+            description = if (pickedFilesAreAppCopies) {
+                "Berkas yang kamu pilih disalin dulu ke cache agar bisa diunggah. " +
+                    "Salinan itu langsung dihapus setelah unggahan berhasil, jadi " +
+                    "penyimpanan ponsel tidak penuh oleh sisa unggahan. Berkas " +
+                    "aslimu di folder tetap utuh."
+            } else {
+                "Tidak berlaku di desktop: berkas diunggah langsung dari lokasi " +
+                    "aslinya, jadi tidak ada salinan yang perlu dihapus."
+            },
+            checked = state.deleteUploadedCopies && pickedFilesAreAppCopies,
+            onCheckedChange = onDeleteCopiesChange,
+            enabled = pickedFilesAreAppCopies,
+        )
     }
 }
 

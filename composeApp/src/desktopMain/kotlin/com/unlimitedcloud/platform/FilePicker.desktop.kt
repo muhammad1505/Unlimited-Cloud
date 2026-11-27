@@ -5,6 +5,9 @@ import androidx.compose.runtime.remember
 import javax.swing.JFileChooser
 import javax.swing.filechooser.FileNameExtensionFilter
 
+/** The desktop pickers hand out the file where it lives, never a copy. */
+actual val pickedFilesAreAppCopies: Boolean = false
+
 @Composable
 actual fun rememberImagePicker(onPicked: (String?) -> Unit): () -> Unit {
     val chooser = remember {

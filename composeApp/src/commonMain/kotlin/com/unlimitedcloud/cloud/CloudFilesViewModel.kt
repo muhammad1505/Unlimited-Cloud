@@ -14,9 +14,11 @@ import com.unlimitedcloud.platform.TransferNotifier
 import com.unlimitedcloud.platform.synchronizedBlock
 import com.unlimitedcloud.platform.createTransferNotifier
 import com.unlimitedcloud.platform.createUploadThumbnail
+import com.unlimitedcloud.platform.pickedFilesAreAppCopies
 import com.unlimitedcloud.settings.AppPreferences
 import com.unlimitedcloud.settings.MAX_TRANSFER_PARALLELISM
 import com.unlimitedcloud.settings.MIN_TRANSFER_PARALLELISM
+import com.unlimitedcloud.ui.util.formatBytes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -92,6 +94,11 @@ data class ExplorerUiState(
     val parallelTransfers: Int = 3,
     /** Whether uploads without a folder are filed into a topic by file type. */
     val autoTopics: Boolean = true,
+    /**
+     * Whether the copies the app made for an upload are deleted once TDLib has
+     * the file. The original file is never the one removed.
+     */
+    val deleteUploadedCopies: Boolean = true,
     /** True while an old-file tidy pass runs; Settings disables its button. */
     val tidying: Boolean = false,
     /** Custom name of the storage group; null while it keeps the default one. */
@@ -196,6 +203,7 @@ class CloudFilesViewModel(
             autoSavePhotos = preferences.autoSavePhotos(),
             parallelTransfers = preferences.transferParallelism(),
             autoTopics = preferences.autoTopics(),
+            deleteUploadedCopies = preferences.deleteUploadedCopies(),
             storageTitle = preferences.cloudRootTitle(),
             storageMuted = preferences.cloudRootMuted(),
             storageArchived = preferences.cloudRootArchived(),
@@ -363,6 +371,15 @@ class CloudFilesViewModel(
         preferences.setAutoTopics(enabled)
         state.update { it.copy(autoTopics = enabled) }
         refresh()
+    }
+
+    /**
+     * Turns the post-upload cache cleanup on or off. Only copies the app made
+     * are ever removed; the file the user picked stays where it was.
+     */
+    fun setDeleteUploadedCopies(enabled: Boolean) {
+        preferences.setDeleteUploadedCopies(enabled)
+        state.update { it.copy(deleteUploadedCopies = enabled) }
     }
 
     /**
@@ -764,6 +781,10 @@ class CloudFilesViewModel(
             var uploaded = 0
             var failed = 0
             var finished = 0
+            var freedBytes = 0L
+            // Read once per batch: switching the setting off while an upload
+            // runs must not start deleting copies the user wants to keep.
+            val deleteCopies = state.value.deleteUploadedCopies
             // Workers run on the shared multi-threaded dispatcher, so the
             // counters and the one ongoing notification are guarded.
             val stats = Mutex()
@@ -795,9 +816,17 @@ class CloudFilesViewModel(
                                 localPath = request.localPath,
                                 folder = request.folder,
                             )
+                            // Only after TDLib took the file: a failed or cancelled
+                            // upload still needs its copy to retry from.
+                            val freed = if (result.isSuccess && deleteCopies) {
+                                deleteUploadedCopy(request.localPath)
+                            } else {
+                                0L
+                            }
                             val message = stats.withLock {
                                 finished++
                                 if (result.isSuccess) uploaded++ else failed++
+                                freedBytes += freed
                                 "$finished/${requests.size} selesai · $uploaded berhasil" +
                                     (if (failed > 0) ", $failed gagal" else "")
                             }
@@ -825,15 +854,22 @@ class CloudFilesViewModel(
             notifier.clearProgress()
             // The cache copies are only needed while TDLib uploads them; keeping
             // them filled the cache after a few folder uploads.
-            cacheRoot?.let { root -> deleteCacheCopy(root) }
+            if (deleteCopies) cacheRoot?.let { root -> deleteCacheCopy(root) }
             if (uploaded > 0) refresh()
+            val freedNote = freedBytes
+                .takeIf { it > 0L }
+                ?.let { "cache ${formatBytes(it)} dibersihkan" }
+            val extras = listOfNotNull(note, freedNote).joinToString(" · ")
+            if (freedBytes > 0L) {
+                logDiagnostic(LOG_TAG, "cache dibersihkan: ${formatBytes(freedBytes)}")
+            }
             state.update {
                 it.copy(
                     status = when {
                         single && failed == 0 -> "Unggahan $first selesai"
                         uploaded > 0 -> "$uploaded berkas diunggah"
                         else -> null
-                    }?.let { message -> note?.let { "$message · $it" } ?: message },
+                    }?.let { message -> if (extras.isEmpty()) message else "$message · $extras" },
                     error = if (failed > 0) {
                         if (single) "$first gagal diunggah" else "$failed berkas gagal diunggah"
                     } else {
@@ -844,7 +880,7 @@ class CloudFilesViewModel(
 
             // The system notification is the only result the user sees when the
             // app is no longer in the foreground.
-            val noteSuffix = note?.let { " · $it" }.orEmpty()
+            val noteSuffix = extras.takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty()
             val notifyWithNote: (String, String) -> Unit = { title, message ->
                 notifyTransfer(title, message + noteSuffix)
             }
@@ -906,6 +942,21 @@ class CloudFilesViewModel(
     private suspend fun deleteCacheCopy(root: String) = withContext(Dispatchers.Default) {
         runCatching { FileSystem.SYSTEM.deleteRecursively(root.toPath()) }
         Unit
+    }
+
+    /**
+     * Deletes the copy the app made for an upload and returns how many bytes
+     * that freed. Desktop hands out the user's own files, so nothing is deleted
+     * there; the check lives here so no caller can get it wrong.
+     */
+    private suspend fun deleteUploadedCopy(path: String): Long = withContext(Dispatchers.Default) {
+        if (!pickedFilesAreAppCopies) return@withContext 0L
+        runCatching {
+            val target = path.toPath()
+            val size = FileSystem.SYSTEM.metadataOrNull(target)?.size ?: 0L
+            FileSystem.SYSTEM.delete(target, mustExist = false)
+            size
+        }.getOrDefault(0L)
     }
 
     /** Local copies handed out for previews, so reopening a file is instant. */
@@ -1321,6 +1372,7 @@ class CloudFilesViewModel(
             autoSavePhotos = preferences.autoSavePhotos(),
             parallelTransfers = preferences.transferParallelism(),
             autoTopics = preferences.autoTopics(),
+            deleteUploadedCopies = preferences.deleteUploadedCopies(),
             storageTitle = preferences.cloudRootTitle(),
             storageMuted = preferences.cloudRootMuted(),
             storageArchived = preferences.cloudRootArchived(),

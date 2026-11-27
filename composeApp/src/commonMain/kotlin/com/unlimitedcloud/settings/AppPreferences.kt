@@ -322,6 +322,18 @@ class AppPreferences(
         count.coerceIn(MIN_TRANSFER_PARALLELISM, MAX_TRANSFER_PARALLELISM).toString(),
     )
 
+    /**
+     * Whether the copies the app made for an upload are removed once TDLib has
+     * the file. On by default: the user's original is never touched, so keeping
+     * the copy only fills the phone's storage. Desktop uploads from the original
+     * location and deletes nothing, whatever this says.
+     */
+    fun deleteUploadedCopies(): Boolean =
+        get(KEY_DELETE_UPLOADED_COPIES)?.toBooleanStrictOrNull() ?: true
+
+    fun setDeleteUploadedCopies(enabled: Boolean) =
+        put(KEY_DELETE_UPLOADED_COPIES, enabled.toString())
+
     // --- Device gallery --------------------------------------------------------
 
     /** Copies downloaded photos into Pictures/Unlimited Cloud via MediaStore. */
@@ -442,5 +454,6 @@ class AppPreferences(
         const val KEY_GALLERY_LAST_SYNC = "gallery.lastSync"
         const val KEY_AUTO_SAVE_PHOTOS = "gallery.autoSavePhotos"
         const val KEY_TRANSFER_PARALLELISM = "transfer.parallelism"
+        const val KEY_DELETE_UPLOADED_COPIES = "cloud.deleteUploadedCopies"
     }
 }

@@ -125,6 +125,7 @@ bila berkas utama terpotong. Isinya:
 | `cloud.autoTopics` | unggahan difilingkan ke topik jenis (bawaan `true`) |
 | `cloud.looseFilesTidied` | penanda sapuan penuh berkas lama sudah dijalankan |
 | `cloud.tidyPending` | id pesan lama yang gagal dirapikan, dicoba lagi nanti |
+| `cloud.deleteUploadedCopies` | hapus salinan cache setelah unggahan berhasil (bawaan aktif; hanya menyentuh salinan milik aplikasi) |
 | `changelog.lastSeenVersionCode` | gate pop-up pembaruan |
 | `gallery.autoSync` | switch sinkronisasi otomatis |
 | `gallery.folderId` / `gallery.folderName` | folder SAF yang dipilih |
