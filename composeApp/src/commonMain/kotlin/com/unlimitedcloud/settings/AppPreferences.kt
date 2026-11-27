@@ -78,6 +78,31 @@ class AppPreferences(
         put(KEY_CLOUD_ROOT_TITLE, title?.trim()?.takeIf { it.isNotEmpty() })
 
     /**
+     * Whether uploads should stay silent. A storage group receives a message per
+     * uploaded file, so it is muted unless the user says otherwise.
+     */
+    fun cloudRootMuted(): Boolean = get(KEY_CLOUD_ROOT_MUTED)?.toBooleanStrictOrNull() ?: true
+
+    fun setCloudRootMuted(muted: Boolean) =
+        put(KEY_CLOUD_ROOT_MUTED, muted.toString())
+
+    /** Whether the group is kept in the Telegram archive instead of the chat list. */
+    fun cloudRootArchived(): Boolean = get(KEY_CLOUD_ROOT_ARCHIVED) == "true"
+
+    fun setCloudRootArchived(archived: Boolean) =
+        put(KEY_CLOUD_ROOT_ARCHIVED, archived.toString())
+
+    /**
+     * Version whose description text was last written into the group. The
+     * description carries the app version so the group is identifiable in
+     * Telegram after a reinstall.
+     */
+    fun cloudRootDescriptionVersion(): String? = get(KEY_CLOUD_DESCRIPTION_VERSION)
+
+    fun setCloudRootDescriptionVersion(version: String) =
+        put(KEY_CLOUD_DESCRIPTION_VERSION, version)
+
+    /**
      * Drops the keys that belong to the Telegram account. The picked gallery
      * folders are kept: those are device grants, not account data.
      */
@@ -85,6 +110,9 @@ class AppPreferences(
         synchronizedBlock(lock) {
             put(KEY_CLOUD_ROOT_CHAT_ID, null)
             put(KEY_CLOUD_ROOT_TITLE, null)
+            put(KEY_CLOUD_ROOT_MUTED, null)
+            put(KEY_CLOUD_ROOT_ARCHIVED, null)
+            put(KEY_CLOUD_DESCRIPTION_VERSION, null)
             put(KEY_GALLERY_SYNCED_KEYS, null)
             put(KEY_GALLERY_FAILED_KEYS, null)
             put(KEY_GALLERY_LAST_SYNC, null)
@@ -359,6 +387,9 @@ class AppPreferences(
         const val KEY_THEME = "theme"
         const val KEY_CLOUD_ROOT_CHAT_ID = "cloud.rootChatId"
         const val KEY_CLOUD_ROOT_TITLE = "cloud.rootTitle"
+        const val KEY_CLOUD_ROOT_MUTED = "cloud.muted"
+        const val KEY_CLOUD_ROOT_ARCHIVED = "cloud.archived"
+        const val KEY_CLOUD_DESCRIPTION_VERSION = "cloud.descriptionVersion"
         const val KEY_LAST_SEEN_VERSION = "changelog.lastSeenVersionCode"
         const val KEY_GALLERY_AUTO_SYNC = "gallery.autoSync"
         const val KEY_GALLERY_BACKGROUND_SYNC = "gallery.backgroundSync"

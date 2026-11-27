@@ -43,9 +43,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.unlimitedcloud.AppBuildInfo
 import com.unlimitedcloud.auth.AuthUiState
+import com.unlimitedcloud.cloud.CloudChannelManager
 import com.unlimitedcloud.cloud.CloudChannelState
 import com.unlimitedcloud.cloud.CloudFilesViewModel
 import com.unlimitedcloud.cloud.ExplorerUiState
@@ -53,13 +55,16 @@ import com.unlimitedcloud.log.LogStore
 import com.unlimitedcloud.platform.BatteryOptimizationSnapshot
 import com.unlimitedcloud.platform.BatterySettingsDestination
 import com.unlimitedcloud.platform.rememberBatteryOptimizationController
+import com.unlimitedcloud.platform.openTelegramChat
 import com.unlimitedcloud.platform.rememberGalleryFolderPicker
+import com.unlimitedcloud.platform.rememberImagePicker
 import com.unlimitedcloud.settings.MAX_TRANSFER_PARALLELISM
 import com.unlimitedcloud.settings.MIN_TRANSFER_PARALLELISM
 import com.unlimitedcloud.ui.components.ActionRow
 import com.unlimitedcloud.ui.components.AppAvatar
 import com.unlimitedcloud.ui.components.AppIcons
 import com.unlimitedcloud.ui.components.AppTextField
+import com.unlimitedcloud.ui.components.BrandMark
 import com.unlimitedcloud.ui.components.ConfirmDialog
 import com.unlimitedcloud.ui.components.InfoRow
 import com.unlimitedcloud.ui.components.SectionHeader
@@ -98,6 +103,14 @@ fun SettingsScreen(
     val batteryController = rememberBatteryOptimizationController()
     var battery by remember(batteryController) { mutableStateOf(batteryController.snapshot()) }
 
+    val pickStoragePhoto = rememberImagePicker { path ->
+        if (path == null) {
+            viewModel.reportStatus("Pemilihan foto dibatalkan")
+        } else {
+            viewModel.applyStoragePhoto(path)
+        }
+    }
+
     val pickGalleryFolder = rememberGalleryFolderPicker { folder ->
         if (folder != null) {
             viewModel.addGalleryFolder(folder)
@@ -133,6 +146,15 @@ fun SettingsScreen(
             customizing = filesState.storageCustomizing,
             onRenameClick = { showRenameStorage = true },
             onApplyIcon = viewModel::applyStorageIcon,
+            onPickPhoto = pickStoragePhoto,
+            onMutedChange = viewModel::setStorageMuted,
+            onArchivedChange = viewModel::setStorageArchived,
+            onOpenTelegram = {
+                val chatId = (channelState as? CloudChannelState.Ready)?.chatId
+                if (chatId == null || !openTelegramChat(chatId)) {
+                    viewModel.reportError("Grup belum siap atau Telegram tidak bisa dibuka")
+                }
+            },
             onRefresh = viewModel::refresh,
         )
 
@@ -226,11 +248,15 @@ fun SettingsScreen(
 
     if (showRenameStorage) {
         StorageNameDialog(
-            initial = filesState.storageTitle.orEmpty(),
+            initial = filesState.storageTitle ?: CloudChannelManager.DEFAULT_ROOT_TITLE,
             busy = filesState.storageCustomizing,
             onConfirm = { name ->
                 showRenameStorage = false
                 viewModel.renameStorageGroup(name)
+            },
+            onReset = {
+                showRenameStorage = false
+                viewModel.resetStorageName()
             },
             onDismiss = { showRenameStorage = false },
         )
@@ -304,6 +330,7 @@ private fun StorageNameDialog(
     initial: String,
     busy: Boolean,
     onConfirm: (String) -> Unit,
+    onReset: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var name by remember(initial) { mutableStateOf(initial) }
@@ -343,8 +370,13 @@ private fun StorageNameDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Batal")
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onReset) {
+                    Text("Kembalikan bawaan")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Batal")
+                }
             }
         },
         shape = RoundedCornerShape(24.dp),
@@ -363,6 +395,10 @@ private fun StorageCard(
     customizing: Boolean,
     onRenameClick: () -> Unit,
     onApplyIcon: () -> Unit,
+    onPickPhoto: () -> Unit,
+    onMutedChange: (Boolean) -> Unit,
+    onArchivedChange: (Boolean) -> Unit,
+    onOpenTelegram: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     SurfaceCard(modifier = Modifier.fillMaxWidth()) {
@@ -393,20 +429,36 @@ private fun StorageCard(
             modifier = Modifier.padding(vertical = 2.dp),
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
         )
-        InfoRow(
-            icon = AppIcons.Tune,
-            title = "Nama grup",
-            value = rootTitle ?: "Bawaan",
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            BrandMark(size = 40.dp)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = rootTitle ?: CloudChannelManager.DEFAULT_ROOT_TITLE,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "Grup privat di Telegram · ikon aplikasi",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Text(
-            text = "Nama dan ikon grup Telegram yang menyimpan berkas ini. Mengubah nama " +
-                "tidak memindahkan berkas: setiap folder tetap menjadi topik grup.",
+            text = "Mengubah nama atau foto tidak memindahkan berkas: setiap folder tetap " +
+                "menjadi topik grup.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(4.dp))
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             TextButton(onClick = onRenameClick, enabled = !customizing) {
@@ -425,9 +477,41 @@ private fun StorageCard(
                     modifier = Modifier.size(17.dp),
                 )
                 Spacer(Modifier.width(6.dp))
-                Text(if (customizing) "Memproses…" else "Pakai ikon aplikasi")
+                Text(if (customizing) "Memproses…" else "Ikon aplikasi")
+            }
+            TextButton(onClick = onPickPhoto, enabled = !customizing) {
+                Icon(
+                    imageVector = AppIcons.Photo,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("Ganti foto")
+            }
+            TextButton(onClick = onOpenTelegram) {
+                Icon(
+                    imageVector = AppIcons.ArrowForward,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("Buka Telegram")
             }
         }
+        ToggleRow(
+            title = "Bisukan grup",
+            description = "Pesan unggahan tetap masuk, tetapi tidak berbunyi.",
+            checked = state.storageMuted,
+            onCheckedChange = onMutedChange,
+            enabled = !customizing,
+        )
+        ToggleRow(
+            title = "Arsipkan grup",
+            description = "Simpan grup di arsip Telegram agar daftar chat tetap rapi.",
+            checked = state.storageArchived,
+            onCheckedChange = onArchivedChange,
+            enabled = !customizing,
+        )
         Spacer(Modifier.height(2.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),

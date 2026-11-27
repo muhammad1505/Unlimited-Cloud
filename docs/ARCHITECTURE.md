@@ -60,6 +60,18 @@ Channel pribadi adalah database sekaligus filesystem:
   tersimpan dianggap bukti kepemilikan: judul hanya dipakai saat grup harus
   dicari lewat pencarian, dan grup yang topiknya dimatikan diaktifkan lagi
   alih-alih dibuat ulang (membuat ulang akan memutus semua berkas lama).
+- Presentasi diselaraskan sekali per sesi (`ensurePresentation`): ikon hanya
+  dipasang bila `getChat.photo` kosong, grup dibisukan lewat
+  `setChatNotificationSettings`, dan dimasukkan ke arsip (`addChatToList`) bila
+  saklarnya aktif. Saklar `false` tidak pernah menarik grup keluar dari arsip
+  yang diatur pengguna sendiri.
+- Deskripsi grup ditulis ulang hanya saat versi aplikasi berubah. Teksnya memuat
+  penanda `Unlimited Cloud storage root`, yang dipakai memverifikasi kandidat
+  hasil pencarian karena nama bawaan "Unlimited Cloud" terlalu umum.
+- Foto kustom dipilih lewat `rememberImagePicker` (Android menyalin ke cache,
+  desktop memakai berkas aslinya) lalu diunggah dengan jalur `setChatPhoto` yang
+  sama. "Buka Telegram" memakai `tg://openmessage?chat_id` dengan
+  `t.me/c/<supergroup id>` sebagai fallback.
 
 `CloudFileRepository` menangani JSON TDLib secara mentah:
 
@@ -89,6 +101,9 @@ bila berkas utama terpotong. Isinya:
 | `theme` | `System`, `Light`, `Dark` |
 | `cloud.rootChatId` | id grup penyimpanan, agar grup tidak dibuat ulang tiap buka |
 | `cloud.rootTitle` | nama kustom grup penyimpanan (kosong = judul bawaan) |
+| `cloud.muted` | grup penyimpanan dibisukan (bawaan `true`) |
+| `cloud.archived` | grup penyimpanan disimpan di arsip Telegram |
+| `cloud.descriptionVersion` | versi aplikasi yang tertulis di deskripsi grup |
 | `changelog.lastSeenVersionCode` | gate pop-up pembaruan |
 | `gallery.autoSync` | switch sinkronisasi otomatis |
 | `gallery.folderId` / `gallery.folderName` | folder SAF yang dipilih |

@@ -92,6 +92,10 @@ data class ExplorerUiState(
     val parallelTransfers: Int = 3,
     /** Custom name of the storage group; null while it keeps the default one. */
     val storageTitle: String? = null,
+    /** Whether the storage group is muted in Telegram. */
+    val storageMuted: Boolean = true,
+    /** Whether the storage group is kept in the Telegram archive. */
+    val storageArchived: Boolean = false,
     /** True while a rename or icon upload runs, so Settings disables both. */
     val storageCustomizing: Boolean = false,
     /** True when the platform has a notification shade to post into. */
@@ -184,6 +188,8 @@ class CloudFilesViewModel(
             autoSavePhotos = preferences.autoSavePhotos(),
             parallelTransfers = preferences.transferParallelism(),
             storageTitle = preferences.cloudRootTitle(),
+            storageMuted = preferences.cloudRootMuted(),
+            storageArchived = preferences.cloudRootArchived(),
             notificationsSupported = notifier.supported,
             notificationsEnabled = !notifier.supported || notifier.enabled,
         ),
@@ -382,6 +388,97 @@ class CloudFilesViewModel(
                         error = result.exceptionOrNull()?.message ?: "Nama grup gagal diganti",
                     )
                 }
+            }
+        }
+    }
+
+    /** Puts the friendly default name back on the storage group. */
+    fun resetStorageName() {
+        if (state.value.storageCustomizing) return
+        scope.launch {
+            state.update { it.copy(storageCustomizing = true) }
+            val result = channelManager.resetRootTitle()
+            state.update { current ->
+                if (result.isSuccess) {
+                    current.copy(
+                        storageCustomizing = false,
+                        storageTitle = preferences.cloudRootTitle(),
+                        status = "Nama grup penyimpanan dikembalikan ke bawaan",
+                        error = null,
+                    )
+                } else {
+                    current.copy(
+                        storageCustomizing = false,
+                        status = null,
+                        error = result.exceptionOrNull()?.message ?: "Nama grup gagal dikembalikan",
+                    )
+                }
+            }
+        }
+    }
+
+    /** Uploads a photo the user picked as the storage group photo. */
+    fun applyStoragePhoto(path: String) {
+        if (state.value.storageCustomizing) return
+        scope.launch {
+            state.update { it.copy(storageCustomizing = true) }
+            val result = channelManager.applyRootPhoto(path)
+            state.update { current ->
+                if (result.isSuccess) {
+                    current.copy(
+                        storageCustomizing = false,
+                        status = "Foto grup penyimpanan diperbarui",
+                        error = null,
+                    )
+                } else {
+                    current.copy(
+                        storageCustomizing = false,
+                        status = null,
+                        error = result.exceptionOrNull()?.message ?: "Foto grup gagal dipasang",
+                    )
+                }
+            }
+        }
+    }
+
+    /** Mutes the storage group so its upload messages stay silent. */
+    fun setStorageMuted(muted: Boolean) {
+        if (state.value.storageCustomizing) return
+        scope.launch {
+            state.update { it.copy(storageCustomizing = true) }
+            val result = channelManager.setMuted(muted)
+            state.update { current ->
+                current.copy(
+                    storageCustomizing = false,
+                    storageMuted = if (result.isSuccess) muted else current.storageMuted,
+                    status = if (result.isSuccess) {
+                        if (muted) "Grup penyimpanan dibisukan" else "Grup penyimpanan kembali berbunyi"
+                    } else {
+                        null
+                    },
+                    error = result.exceptionOrNull()?.message,
+                )
+            }
+        }
+    }
+
+    /** Keeps the storage group in the Telegram archive, or back in the chat list. */
+    fun setStorageArchived(archived: Boolean) {
+        if (state.value.storageCustomizing) return
+        scope.launch {
+            state.update { it.copy(storageCustomizing = true) }
+            val result = channelManager.setArchived(archived)
+            state.update { current ->
+                current.copy(
+                    storageCustomizing = false,
+                    storageArchived = if (result.isSuccess) archived else current.storageArchived,
+                    status = if (result.isSuccess) {
+                        if (archived) "Grup penyimpanan diarsipkan" else "Grup penyimpanan keluar dari arsip"
+                    } else {
+                        null
+                    },
+                    error = result.exceptionOrNull()?.message,
+                )
             }
         }
     }
@@ -1056,6 +1153,8 @@ class CloudFilesViewModel(
             autoSavePhotos = preferences.autoSavePhotos(),
             parallelTransfers = preferences.transferParallelism(),
             storageTitle = preferences.cloudRootTitle(),
+            storageMuted = preferences.cloudRootMuted(),
+            storageArchived = preferences.cloudRootArchived(),
         )
     }
 

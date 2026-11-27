@@ -16,6 +16,32 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
+actual fun rememberImagePicker(onPicked: (String?) -> Unit): () -> Unit {
+    val context = AndroidPlatform.requireContext()
+    val result by rememberUpdatedState(onPicked)
+    val scope = rememberCoroutineScope()
+
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) {
+            result(null)
+            return@rememberLauncherForActivityResult
+        }
+        // The picked image is copied so TDLib has a real path to upload from.
+        scope.launch {
+            val path = withContext(Dispatchers.IO) {
+                val directory = File(context.cacheDir, "group-photo").apply { mkdirs() }
+                copyToCache(context, uri, directory)
+            }
+            result(path)
+        }
+    }
+
+    return remember(launcher) { { launcher.launch("image/*") } }
+}
+
+@Composable
 actual fun rememberLocalFilePicker(onPicked: (List<String>) -> Unit): () -> Unit {
     val context = AndroidPlatform.requireContext()
     // rememberUpdatedState so a lambda captured by the launcher still reflects

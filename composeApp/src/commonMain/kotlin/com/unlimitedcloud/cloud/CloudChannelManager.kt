@@ -1,5 +1,6 @@
 package com.unlimitedcloud.cloud
 
+import com.unlimitedcloud.AppBuildInfo
 import com.unlimitedcloud.log.LOG_TAG
 import com.unlimitedcloud.log.logDiagnostic
 import com.unlimitedcloud.platform.appIconFilePath
@@ -54,12 +55,30 @@ class CloudChannelManager(
     companion object {
         const val ROOT_STORAGE_TITLE = "UNLIMITED_CLOUD_ROOT_V1"
 
+        /**
+         * Name new groups get. The sentinel above is still recognised, so groups
+         * created by older builds are never mistaken for someone else's chat.
+         */
+        const val DEFAULT_ROOT_TITLE = "Unlimited Cloud"
+
         /** Telegram rejects a chat title longer than this. */
         const val CHAT_TITLE_LIMIT = 128
 
-        private const val ROOT_STORAGE_DESCRIPTION =
-            "Unlimited Cloud storage root (v1). Every topic is a folder; renaming or " +
-                "deleting this group orphans uploaded files."
+        /**
+         * Prefix of the description this app writes. A chat found by its
+         * (generic) name only counts as storage when this marker is there, and
+         * groups from older builds carry the same prefix.
+         */
+        private const val ROOT_DESCRIPTION_MARKER = "Unlimited Cloud storage root"
+
+        /** Mute duration meaning "until the user unmutes it". */
+        private const val MUTE_FOREVER = Int.MAX_VALUE
+
+        /** Description text, carrying the app version for identification. */
+        private fun rootDescription(): String =
+            "$ROOT_DESCRIPTION_MARKER (v1) · versi aplikasi ${AppBuildInfo.VERSION_NAME}. " +
+                "Setiap topik adalah folder; mengganti nama grup aman, menghapusnya " +
+                "membuat berkas yatim."
 
         private const val CHAT_SCAN_LIMIT = 100
 
@@ -81,6 +100,9 @@ class CloudChannelManager(
     private val topics = ForumTopics(session)
     private var cachedChatId: Long? = null
 
+    /** Icon, mute, archive and description are applied once per session. */
+    private var presentationApplied = false
+
     /** Why the last `createNewSupergroupChat` was refused, for the settings card. */
     private var lastCreateError: String? = null
 
@@ -90,6 +112,7 @@ class CloudChannelManager(
     /** Forgets the storage chat of the previous account after a logout. */
     fun forget() {
         cachedChatId = null
+        presentationApplied = false
         topics.forget()
         state.value = CloudChannelState.Idle
     }
@@ -167,7 +190,7 @@ class CloudChannelManager(
             lastCreateFailure?.let { it.elapsedNow() < CREATE_RETRY_COOLDOWN } == true
         if (recentlyFailed) {
             state.value = CloudChannelState.Failed(
-                lastCreateError ?: "grup $ROOT_STORAGE_TITLE tidak dapat dibuat",
+                lastCreateError ?: "grup $DEFAULT_ROOT_TITLE tidak dapat dibuat",
             )
             return null
         }
@@ -181,9 +204,9 @@ class CloudChannelManager(
             val reason = lastCreateError
             state.value = CloudChannelState.Failed(
                 if (reason.isNullOrBlank()) {
-                    "grup $ROOT_STORAGE_TITLE tidak dapat dibuat"
+                    "grup $DEFAULT_ROOT_TITLE tidak dapat dibuat"
                 } else {
-                    "grup $ROOT_STORAGE_TITLE tidak dapat dibuat: $reason"
+                    "grup $DEFAULT_ROOT_TITLE tidak dapat dibuat: $reason"
                 },
             )
             return null
@@ -198,12 +221,15 @@ class CloudChannelManager(
 
     private data class StorageChat(val chatId: Long, val isForum: Boolean)
 
-    private fun ready(chatId: Long): Long {
+    private suspend fun ready(chatId: Long): Long {
         cachedChatId = chatId
         if (state.value != CloudChannelState.Ready(chatId)) {
             logDiagnostic(LOG_TAG, "penyimpanan siap: $chatId")
         }
         state.value = CloudChannelState.Ready(chatId)
+        // Icon, mute, archive and description follow the app's own settings and
+        // are applied once, so the group looks the same everywhere.
+        ensurePresentation(chatId)
         return chatId
     }
 
@@ -275,7 +301,10 @@ class CloudChannelManager(
         // only an ownership hint for a chat found by searching; a stored id is
         // trusted on its own.
         val isOwnTitle = title.startsWith(ROOT_STORAGE_TITLE) ||
-            (preferences.cloudRootTitle()?.let { it == title } == true)
+            (preferences.cloudRootTitle()?.let { it == title } == true) ||
+            // The friendly default name is too generic to trust on its own, so
+            // the description this app writes has to confirm it.
+            (title == DEFAULT_ROOT_TITLE && hasStorageDescription(supergroupId))
 
         return when {
             isChannel -> if (trusted || isOwnTitle) Check.Legacy else Check.Missing
@@ -351,14 +380,12 @@ class CloudChannelManager(
 
         if (checkWithRetries(chatId) == Check.Valid) {
             logDiagnostic(LOG_TAG, "grup topik siap: $chatId")
-            applyIconBestEffort(chatId)
             return chatId
         }
 
         logDiagnostic(LOG_TAG, "mengaktifkan topik di grup $chatId")
         if (enableTopics(chatId)) {
             logDiagnostic(LOG_TAG, "grup topik siap: $chatId")
-            applyIconBestEffort(chatId)
             return chatId
         }
 
@@ -374,11 +401,11 @@ class CloudChannelManager(
                 buildJsonObject {
                     put("@type", "createNewSupergroupChat")
                     // A name the user picked in Settings is used right away instead
-                    // of creating the group with the sentinel and renaming after.
-                    put("title", preferences.cloudRootTitle() ?: ROOT_STORAGE_TITLE)
+                    // of creating the group with the default name and renaming after.
+                    put("title", preferences.cloudRootTitle() ?: DEFAULT_ROOT_TITLE)
                     put("is_forum", isForum)
                     put("is_channel", false)
-                    put("description", ROOT_STORAGE_DESCRIPTION)
+                    put("description", rootDescription())
                     put("location", if (withLocation) chatLocationJson() else JsonNull)
                 },
             )
@@ -620,18 +647,176 @@ class CloudChannelManager(
         return Result.success(Unit)
     }
 
+    private fun rootChatId(): Long? = cachedChatId ?: preferences.cloudRootChatId()
+
     /**
-     * Best effort: a group that is ready for uploads must not be thrown away just
-     * because its photo could not be set.
+     * Applies the look the app promises, once per session: the app icon as the
+     * group photo when it has none, the mute switch, the archive switch and the
+     * description carrying the app version.
+     *
+     * Best effort. None of this holds a file, so a refusal must never keep the
+     * file list from loading.
      */
-    private suspend fun applyIconBestEffort(chatId: Long) {
-        val path = appIconFilePath() ?: return
-        setRootPhoto(chatId, path).onFailure { failure ->
-            logDiagnostic(LOG_TAG, "ikon grup tidak terpasang: ${failure.message}")
+    private suspend fun ensurePresentation(chatId: Long) {
+        if (presentationApplied) return
+        presentationApplied = true
+
+        runCatching {
+            val chat = session.call(
+                buildJsonObject {
+                    put("@type", "getChat")
+                    put("chat_id", chatId)
+                },
+            )
+            val hasPhoto = (chat["photo"] as? JsonObject)
+                ?.let { photo -> photo["small"] as? JsonObject }
+                ?.get("id") != null
+            if (!hasPhoto) {
+                val path = appIconFilePath() ?: return@runCatching
+                setRootPhoto(chatId, path).onFailure { failure ->
+                    logDiagnostic(LOG_TAG, "ikon grup tidak terpasang: ${failure.message}")
+                }
+            }
         }
+
+        applyMuted(chatId, preferences.cloudRootMuted()).onFailure { failure ->
+            logDiagnostic(LOG_TAG, "bisukan grup gagal: ${failure.message}")
+        }
+        // Archiving is only forced on. A group the user archived by hand keeps
+        // that state, so `false` never drags it back into the chat list.
+        if (preferences.cloudRootArchived()) {
+            applyArchived(chatId, archived = true).onFailure { failure ->
+                logDiagnostic(LOG_TAG, "arsipkan grup gagal: ${failure.message}")
+            }
+        }
+        updateDescription(chatId)
     }
 
-    private fun rootChatId(): Long? = cachedChatId ?: preferences.cloudRootChatId()
+    /** Mutes or unmutes the storage group and remembers the choice. */
+    suspend fun setMuted(muted: Boolean): Result<Unit> {
+        val chatId = rootChatId()
+            ?: return Result.failure(IllegalStateException("Penyimpanan belum siap"))
+        val result = applyMuted(chatId, muted)
+        if (result.isSuccess) preferences.setCloudRootMuted(muted)
+        return result
+    }
+
+    /** Moves the storage group into (or out of) the Telegram archive. */
+    suspend fun setArchived(archived: Boolean): Result<Unit> {
+        val chatId = rootChatId()
+            ?: return Result.failure(IllegalStateException("Penyimpanan belum siap"))
+        val result = applyArchived(chatId, archived)
+        if (result.isSuccess) preferences.setCloudRootArchived(archived)
+        return result
+    }
+
+    /** Uploads a photo the user picked for the storage group. */
+    suspend fun applyRootPhoto(path: String): Result<Unit> {
+        val chatId = rootChatId()
+            ?: return Result.failure(IllegalStateException("Penyimpanan belum siap"))
+        return setRootPhoto(chatId, path)
+    }
+
+    /** Puts the friendly default name back. */
+    suspend fun resetRootTitle(): Result<Unit> = renameRoot(DEFAULT_ROOT_TITLE)
+
+    private suspend fun applyMuted(chatId: Long, muted: Boolean): Result<Unit> {
+        val response = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "setChatNotificationSettings")
+                    put("chat_id", chatId)
+                    put(
+                        "notification_settings",
+                        buildJsonObject {
+                            put("@type", "chatNotificationSettings")
+                            put("use_default_mute_for", false)
+                            put("mute_for", if (muted) MUTE_FOREVER else 0)
+                            // Everything else stays on the account defaults.
+                            put("use_default_sound", true)
+                            put("sound_id", 0L)
+                            put("use_default_show_preview", true)
+                            put("show_preview", true)
+                            put("use_default_mute_stories", true)
+                            put("mute_stories", false)
+                            put("use_default_story_sound", true)
+                            put("story_sound_id", 0L)
+                            put("use_default_show_story_poster", true)
+                            put("show_story_poster", true)
+                            put("use_default_disable_pinned_message_notifications", true)
+                            put("disable_pinned_message_notifications", false)
+                            put("use_default_disable_mention_notifications", true)
+                            put("disable_mention_notifications", false)
+                        },
+                    )
+                },
+            )
+        }.getOrElse { return Result.failure(it) }
+        if (response.isError()) {
+            return Result.failure(
+                IllegalStateException(
+                    response.messageOrNull() ?: "Pengaturan bisu ditolak Telegram",
+                ),
+            )
+        }
+        return Result.success(Unit)
+    }
+
+    private suspend fun applyArchived(chatId: Long, archived: Boolean): Result<Unit> {
+        val response = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "addChatToList")
+                    put("chat_id", chatId)
+                    put(
+                        "chat_list",
+                        buildJsonObject {
+                            put("@type", if (archived) "chatListArchive" else "chatListMain")
+                        },
+                    )
+                },
+            )
+        }.getOrElse { return Result.failure(it) }
+        if (response.isError()) {
+            return Result.failure(
+                IllegalStateException(
+                    response.messageOrNull() ?: "Arsip grup ditolak Telegram",
+                ),
+            )
+        }
+        return Result.success(Unit)
+    }
+
+    /** Writes the description again only when the app version changed. */
+    private suspend fun updateDescription(chatId: Long) {
+        if (preferences.cloudRootDescriptionVersion() == AppBuildInfo.VERSION_NAME) return
+        val response = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "setChatDescription")
+                    put("chat_id", chatId)
+                    put("description", rootDescription())
+                },
+            )
+        }.getOrNull() ?: return
+        if (response.isError()) return
+        preferences.setCloudRootDescriptionVersion(AppBuildInfo.VERSION_NAME)
+    }
+
+    /** Whether the group description carries this app's marker. */
+    private suspend fun hasStorageDescription(supergroupId: Long): Boolean {
+        val full = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "getSupergroupFullInfo")
+                    put("supergroup_id", supergroupId)
+                },
+            )
+        }.getOrNull() ?: return false
+        if (full.isError()) return false
+        return full["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            .contains(ROOT_DESCRIPTION_MARKER)
+    }
 
     private fun JsonObject.messageOrNull(): String? =
         this["message"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
