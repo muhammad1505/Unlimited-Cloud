@@ -140,7 +140,11 @@ fun SignedInScreen(
     // Android 13+ asks once, after the user is signed in. Without the grant the
     // in-app banner still reports every process; only the system notification
     // stays silent, so a refusal costs nothing.
-    val requestNotificationPermission = rememberNotificationPermissionRequest()
+    val requestNotificationPermission = rememberNotificationPermissionRequest {
+        // Refresh after the dialog is answered, so Settings can offer a shortcut
+        // when notifications ended up blocked.
+        viewModel.refreshNotificationState()
+    }
     LaunchedEffect(Unit) { requestNotificationPermission() }
 
     // Entering Berkas refreshes the list, so a file uploaded from another device

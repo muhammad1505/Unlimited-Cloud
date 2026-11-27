@@ -11,13 +11,13 @@ actual fun createGallerySyncSource(): GallerySyncSource = DesktopGallerySyncSour
 private object DesktopGallerySyncSource : GallerySyncSource {
     override val supported: Boolean = false
 
-    override suspend fun pendingPhotos(
+    override suspend fun pendingFiles(
         folder: GalleryFolder,
         alreadySynced: Set<String>,
         limit: Int,
-    ): List<GalleryPhoto> = emptyList()
+    ): List<GalleryFile> = emptyList()
 
-    override fun release(photos: List<GalleryPhoto>) = Unit
+    override fun release(files: List<GalleryFile>) = Unit
 }
 
 @Composable

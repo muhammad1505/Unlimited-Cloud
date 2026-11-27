@@ -113,8 +113,8 @@ Changelog
 | --- | --- | --- |
 | `FilePicker` | SAF `GetContent`, salin ke cache | `JFileChooser` |
 | `FileSharer` | salin ke `cache/shared`, FileProvider, chooser | clipboard file-list |
-| `GallerySyncSource` | SAF tree + `DocumentsContract`, tanpa izin media | `supported = false` |
-| `GalleryBackgroundSync` | WorkManager periodik 6 jam, 8 foto per folder, network + baterai | `supported = false` |
+| `GallerySyncSource` | SAF tree + `DocumentsContract`, semua jenis berkas dan subfolder, tanpa izin media | `supported = false` |
+| `GalleryBackgroundSync` | WorkManager periodik 6 jam, 8 berkas per folder, network + baterai | `supported = false` |
 | `MediaSaver` | MediaStore `Pictures/Unlimited Cloud` (API 29+) | `supported = false` |
 | `BatteryOptimizationController` | `PowerManager`, settings sistem, pintasan OEM | tidak didukung |
 | `LogFileSaver` | SAF `CreateDocument` | `JFileChooser` |
@@ -130,12 +130,15 @@ enam jam dengan constraint jaringan dan baterai tidak rendah. Worker memakai
 `AppPreferences`, `TelegramEngine`, dan `CloudFilesViewModel` dari Koin yang sama;
 `MainActivity` hanya memulai Koin bila belum berjalan, sehingga proses yang
 dibangunkan WorkManager tetap aman. Worker menunggu sesi TDLib tersimpan siap,
-menjalankan hingga 8 foto per folder (parameter `perFolderLimit`), lalu berhenti.
-Sinkronisasi dari layar Pengaturan memakai batas tak terhingga sehingga semua foto
-baru di folder terpilih terunggah dalam satu sesi. Kunci sinkron dicatat per foto,
-jadi sisa batch dilanjutkan pada jadwal berikutnya. Tidak ada layanan latar depan atau
-notifikasi; manifest menghapus izin `FOREGROUND_SERVICE` bawaan WorkManager dan
-receiver diagnostik/profile-installer yang membawa penanda `DUMP`.
+menjalankan hingga 8 berkas per folder (parameter `perFolderLimit`), lalu berhenti.
+Sinkronisasi dari layar Pengaturan memakai batas tak terhingga sehingga semua berkas
+baru di folder terpilih terunggah dalam satu sesi. Kunci sinkron dicatat per dokumen,
+jadi sisa batch dilanjutkan pada jadwal berikutnya. Yang disalin adalah semua jenis
+berkas (bukan hanya gambar) beserta struktur subfoldernya: `Galeri/Liburan/Pantai`.
+Tidak ada layanan latar depan; progres dan hasil transfer muncul sebagai notifikasi
+bila izinnya diberikan, dan `FOREGROUND_SERVICE` bawaan WorkManager tetap dihapus
+dari manifest bersama receiver diagnostik/profile-installer yang membawa penanda
+`DUMP`.
 
 `MediaSaver` menulis foto unduhan ke MediaStore dengan `IS_PENDING`: entri baru
 tampil di galeri setelah salinan selesai, dan entri dihapus bila penyalinan gagal.
@@ -173,7 +176,7 @@ saat ini secara diam-diam, sedangkan pembaruan menampilkan rilis terbaru.
 - Native TDLib tidak ada / kredensial dummy / jaringan diam → layar kegagalan
   dengan instruksi yang sesuai, bukan splash tanpa akhir.
 - Koneksi putus saat transfer → status `Failed` dengan pesan, data lain tetap.
-- Folder galeri dicabut izinnya → `pendingPhotos` mengembalikan daftar kosong;
+- Folder sinkron dicabut izinnya → `pendingFiles` mengembalikan daftar kosong;
   pengguna memilih folder lagi.
 - Sinkron latar belakang menemukan sesi yang butuh kode/password → worker berhenti
   tanpa retry sampai pengguna membuka aplikasi dan menyelesaikan login.

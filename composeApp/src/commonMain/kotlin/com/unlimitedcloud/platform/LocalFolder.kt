@@ -15,12 +15,21 @@ data class LocalFolderSelection(
     /** Folder name; becomes the virtual folder when the user picks none. */
     val name: String,
     /**
-     * Every file of the tree, subfolders included. The relative path is kept so
-     * the upload can recreate the same folder structure instead of flattening
-     * a year of photos into one topic.
+     * Every file of the tree, subfolders included, of every kind. The relative
+     * path is kept so the upload can recreate the same folder structure instead
+     * of flattening a year of files into one topic.
      */
     val files: List<LocalFolderFile>,
-)
+    /** Documents the picker could see but could not copy; reported, never hidden. */
+    val skipped: Int = 0,
+    /** True when a scanner limit stopped the walk and files were left uncopied. */
+    val truncated: Boolean = false,
+    /** Cache directory holding the copies, removed after the upload. */
+    val cacheRoot: String? = null,
+) {
+    /** True when the user should be told that some files were not included. */
+    val incomplete: Boolean get() = skipped > 0 || truncated
+}
 
 /**
  * Opens the platform folder picker.

@@ -19,7 +19,15 @@ actual fun rememberLocalFolderPicker(onPicked: (LocalFolderSelection?) -> Unit):
             val directory = if (result == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
             onPicked(
                 directory?.let { folder ->
-                    LocalFolderSelection(name = folder.name, files = folder.childFiles())
+                    // One extra entry tells whether the ceiling was hit, so the
+                    // upload can say that files were left behind instead of
+                    // pretending the folder held only [MAX_FOLDER_FILES] files.
+                    val scanned = folder.childFiles(MAX_FOLDER_FILES + 1)
+                    LocalFolderSelection(
+                        name = folder.name,
+                        files = scanned.take(MAX_FOLDER_FILES),
+                        truncated = scanned.size > MAX_FOLDER_FILES,
+                    )
                 },
             )
         }
@@ -27,7 +35,7 @@ actual fun rememberLocalFolderPicker(onPicked: (LocalFolderSelection?) -> Unit):
 }
 
 /** Every file under [root], keeping the subfolder as a `/`-separated prefix. */
-private fun File.childFiles(limit: Int = 500): List<LocalFolderFile> =
+private fun File.childFiles(limit: Int): List<LocalFolderFile> =
     walkTopDown()
         .filter { it.isFile }
         .take(limit)
@@ -38,3 +46,5 @@ private fun File.childFiles(limit: Int = 500): List<LocalFolderFile> =
             )
         }
         .toList()
+
+private const val MAX_FOLDER_FILES = 5_000

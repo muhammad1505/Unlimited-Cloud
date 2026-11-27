@@ -12,9 +12,14 @@ actual fun createTransferNotifier(): TransferNotifier = NoopTransferNotifier
 
 private object NoopTransferNotifier : TransferNotifier {
     override val supported: Boolean = false
+    override val enabled: Boolean = false
 
     override fun notify(title: String, message: String) = Unit
+    override fun progress(title: String, message: String) = Unit
+    override fun clearProgress() = Unit
+    override fun openSettings(): Boolean = false
 }
 
 @Composable
-actual fun rememberNotificationPermissionRequest(): () -> Unit = remember { { } }
+actual fun rememberNotificationPermissionRequest(onResult: () -> Unit): () -> Unit =
+    remember { { onResult() } }

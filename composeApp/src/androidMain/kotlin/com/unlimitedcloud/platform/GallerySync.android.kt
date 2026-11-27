@@ -21,6 +21,10 @@ actual fun createGallerySyncSource(): GallerySyncSource =
  * Reads a SAF tree the user picked once. No `READ_MEDIA_IMAGES` permission is
  * involved: the persisted tree grant is the only access the app has, and it is
  * limited to the folder the user chose.
+ *
+ * Every document is collected, whatever its MIME type, and the folder it lived
+ * in is carried along. The old image-only filter turned this into a photo
+ * uploader, which is the opposite of a cloud that stores any file.
  */
 private class AndroidGallerySyncSource(
     private val context: Context,
@@ -28,11 +32,11 @@ private class AndroidGallerySyncSource(
 
     override val supported: Boolean = true
 
-    override suspend fun pendingPhotos(
+    override suspend fun pendingFiles(
         folder: GalleryFolder,
         alreadySynced: Set<String>,
         limit: Int,
-    ): List<GalleryPhoto> = withContext(Dispatchers.IO) {
+    ): List<GalleryFile> = withContext(Dispatchers.IO) {
         clearStaleCache()
         val treeUri = runCatching { Uri.parse(folder.id) }.getOrNull()
             ?: return@withContext emptyList()
@@ -40,12 +44,17 @@ private class AndroidGallerySyncSource(
             DocumentsContract.getTreeDocumentId(treeUri)
         }.getOrNull() ?: return@withContext emptyList()
 
-        collectDocuments(treeUri, rootDocumentId, depth = 0, budget = MAX_SCAN)
+        collectDocuments(
+            treeUri = treeUri,
+            parentDocumentId = rootDocumentId,
+            relativeDirectory = "",
+            depth = 0,
+            budget = MAX_SCAN,
+        )
             .asSequence()
-            .filter { it.mimeType.startsWith("image/") }
             .sortedByDescending { it.lastModified }
             // take(limit) comes before the copy: mapping first copied every
-            // scanned photo of the folder for each batch, then uploaded a handful
+            // scanned file of the folder for each batch, then uploaded a handful
             // and deleted the rest again.
             .filter { document ->
                 val key = document.documentId
@@ -54,26 +63,28 @@ private class AndroidGallerySyncSource(
             .take(limit)
             .mapNotNull { document ->
                 val copy = copyToCache(treeUri, document) ?: return@mapNotNull null
-                GalleryPhoto(
+                GalleryFile(
                     // The document id alone: the old "name|id" key changed when a
-                    // photo was renamed, which uploaded it a second time. The
+                    // file was renamed, which uploaded it a second time. The
                     // legacy form is still honoured above so nothing re-uploads.
                     key = document.documentId,
                     name = document.name,
                     localPath = copy.absolutePath,
                     sizeBytes = document.size,
+                    relativeDirectory = document.relativeDirectory,
                 )
             }
             .toList()
     }
 
-    override fun release(photos: List<GalleryPhoto>) {
-        photos.forEach { photo -> runCatching { File(photo.localPath).delete() } }
+    override fun release(files: List<GalleryFile>) {
+        files.forEach { file -> runCatching { File(file.localPath).delete() } }
     }
 
     private fun collectDocuments(
         treeUri: Uri,
         parentDocumentId: String,
+        relativeDirectory: String,
         depth: Int,
         budget: Int,
     ): List<ScannedDocument> {
@@ -107,9 +118,15 @@ private class AndroidGallerySyncSource(
                     val mimeType = cursor.getString(2).orEmpty()
 
                     if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        val childDirectory = name.safeDirectoryName()
                         val nested = collectDocuments(
                             treeUri = treeUri,
                             parentDocumentId = documentId,
+                            relativeDirectory = if (relativeDirectory.isEmpty()) {
+                                childDirectory
+                            } else {
+                                "$relativeDirectory/$childDirectory"
+                            },
                             depth = depth + 1,
                             budget = remaining,
                         )
@@ -121,9 +138,9 @@ private class AndroidGallerySyncSource(
                     documents += ScannedDocument(
                         documentId = documentId,
                         name = name,
-                        mimeType = mimeType,
                         size = cursor.getLong(3),
                         lastModified = cursor.getLong(4),
+                        relativeDirectory = relativeDirectory,
                     )
                 }
             }
@@ -137,7 +154,7 @@ private class AndroidGallerySyncSource(
         val safeName = document.name
             .substringAfterLast('/')
             .substringAfterLast('\\')
-            .ifBlank { "foto" }
+            .ifBlank { "berkas" }
         val target = File(targetDirectory, "${document.documentId.hashCode()}-$safeName")
         val sourceUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, document.documentId)
         context.contentResolver.openInputStream(sourceUri)?.use { input ->
@@ -163,19 +180,25 @@ private class AndroidGallerySyncSource(
     private data class ScannedDocument(
         val documentId: String,
         val name: String,
-        val mimeType: String,
         val size: Long,
         val lastModified: Long,
+        val relativeDirectory: String,
     )
 
     private companion object {
-        const val MAX_DEPTH = 3
-        const val MAX_SCAN = 600
+        /** Deep enough for real folder trees, which used to stop at three levels. */
+        const val MAX_DEPTH = 16
+
+        /** Documents scanned per batch; the sync repeats until nothing is left. */
+        const val MAX_SCAN = 4_000
 
         /** Copies older than this were left behind by a killed sync. */
         const val STALE_CACHE_MILLIS = 2L * 60 * 60 * 1000
     }
 }
+
+private fun String.safeDirectoryName(): String =
+    substringAfterLast('/').substringAfterLast('\\').replace(':', '_').ifBlank { "folder" }
 
 @Composable
 actual fun rememberGalleryFolderPicker(onPicked: (GalleryFolder?) -> Unit): () -> Unit {
@@ -198,7 +221,7 @@ actual fun rememberGalleryFolderPicker(onPicked: (GalleryFolder?) -> Unit): () -
         result(
             GalleryFolder(
                 id = uri.toString(),
-                name = folderName(context, uri) ?: "Galeri",
+                name = folderName(context, uri) ?: "Folder",
             ),
         )
     }

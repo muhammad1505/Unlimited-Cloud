@@ -10,6 +10,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import com.unlimitedcloud.log.LOG_TAG
+import com.unlimitedcloud.log.logDiagnostic
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -28,8 +30,8 @@ actual fun rememberLocalFolderPicker(onPicked: (LocalFolderSelection?) -> Unit):
             result(null)
             return@rememberLauncherForActivityResult
         }
-        // Copying a tree of up to 500 files takes long enough that doing it on
-        // the main thread froze the UI (and could trip an ANR).
+        // Copying a whole tree takes long enough that doing it on the main
+        // thread froze the UI (and could trip an ANR).
         scope.launch {
             val selection = withContext(Dispatchers.IO) {
                 runCatching { copyFolderToCache(context, uri) }.getOrNull()
@@ -43,9 +45,15 @@ actual fun rememberLocalFolderPicker(onPicked: (LocalFolderSelection?) -> Unit):
 
 /**
  * Copies the picked SAF tree into the cache so TDLib can upload from plain
- * paths, mirroring the subfolders into nested cache directories. Bounded by
- * [MAX_FILES] and [MAX_DEPTH] so a huge tree cannot fill the cache or stall the
- * picker.
+ * paths, mirroring the subfolders into nested cache directories.
+ *
+ * Every document is copied, whatever its type: the picker never filters by
+ * MIME type, because the whole point of the app is storing any file. The old
+ * limit of 500 files silently dropped the rest of a large folder, which looked
+ * like "only images were read" whenever that is what the cursor happened to
+ * return first. The limits below only exist to protect the cache, and hitting
+ * one is reported through [LocalFolderSelection.truncated] instead of hiding
+ * the files that were left behind.
  *
  * Every pick gets its own directory and every file a unique name: two files with
  * the same display name (common across sub-folders) used to overwrite each other,
@@ -62,92 +70,154 @@ private fun copyFolderToCache(context: Context, treeUri: Uri): LocalFolderSelect
         "${name.safeFileName()}-${System.currentTimeMillis()}",
     ).apply { mkdirs() }
 
-    val collected = mutableListOf<LocalFolderFile>()
-    copyChildren(
+    // Keep at most half of the free cache space: the copies are temporary, and
+    // filling the cache would break TDLib's own file storage as well.
+    val freeSpace = runCatching { context.cacheDir.usableSpace }.getOrDefault(0L)
+    val byteBudget = if (freeSpace > 0L) minOf(MAX_BYTES, freeSpace / 2) else MAX_BYTES
+
+    val scan = FolderScan(
         context = context,
         treeUri = treeUri,
-        parentDocumentId = rootId,
         targetDirectory = targetDirectory,
-        relativeDirectory = "",
-        collected = collected,
-        depth = 0,
+        byteBudget = byteBudget,
     )
-    return LocalFolderSelection(name = name, files = collected)
+    scan.scan(rootId)
+
+    logDiagnostic(
+        LOG_TAG,
+        "pindai folder: ${scan.files.size} berkas (${scan.bytes} B) dari $name, " +
+            "dilewati ${scan.skipped}, batas tercapai ${scan.truncated}" +
+            (scan.lastFailure?.let { " · terakhir: $it" } ?: ""),
+    )
+
+    return LocalFolderSelection(
+        name = name,
+        files = scan.files,
+        skipped = scan.skipped,
+        truncated = scan.truncated,
+        cacheRoot = targetDirectory.absolutePath,
+    )
 }
 
 /**
- * Recurses into subfolders and records each file's path relative to the picked
- * root, so the upload can recreate `Liburan/Pantai/foto.jpg` instead of putting
- * everything in one folder.
+ * Walks one picked tree: folders are recursed into, every other document is
+ * copied. A document that cannot be opened is counted as skipped, never silently
+ * ignored, so the upload summary can tell the user how many files stayed behind.
  */
-private fun copyChildren(
-    context: Context,
-    treeUri: Uri,
-    parentDocumentId: String,
-    targetDirectory: File,
-    relativeDirectory: String,
-    collected: MutableList<LocalFolderFile>,
-    depth: Int,
+private class FolderScan(
+    private val context: Context,
+    private val treeUri: Uri,
+    private val targetDirectory: File,
+    private val byteBudget: Long,
 ) {
-    if (depth > MAX_DEPTH || collected.size >= MAX_FILES) return
-    val childrenUri = runCatching {
-        DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocumentId)
-    }.getOrNull() ?: return
+    val files = mutableListOf<LocalFolderFile>()
+    var bytes = 0L
+    var skipped = 0
+    var truncated = false
+    var lastFailure: String? = null
 
-    runCatching {
-        context.contentResolver.query(
-            childrenUri,
-            arrayOf(
-                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                DocumentsContract.Document.COLUMN_MIME_TYPE,
-            ),
-            null,
-            null,
-            null,
-        )?.use { cursor ->
-            while (cursor.moveToNext() && collected.size < MAX_FILES) {
-                val documentId = cursor.getString(0) ?: continue
-                val displayName = cursor.getString(1) ?: continue
-                val mimeType = cursor.getString(2).orEmpty()
+    private fun limitReached(): Boolean = files.size >= MAX_FILES || bytes >= byteBudget
 
-                if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                    val childDirectory = displayName.safeFileName()
-                    copyChildren(
-                        context = context,
-                        treeUri = treeUri,
-                        parentDocumentId = documentId,
-                        targetDirectory = targetDirectory,
-                        relativeDirectory = if (relativeDirectory.isEmpty()) {
-                            childDirectory
-                        } else {
-                            "$relativeDirectory/$childDirectory"
-                        },
-                        collected = collected,
-                        depth = depth + 1,
-                    )
-                    continue
-                }
+    fun scan(rootDocumentId: String) {
+        copyChildren(
+            parentDocumentId = rootDocumentId,
+            relativeDirectory = "",
+            depth = 0,
+        )
+    }
 
-                val directory = File(targetDirectory, relativeDirectory).apply { mkdirs() }
-                val target = uniqueTarget(directory, displayName)
-                val sourceUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
-                val copied = runCatching {
-                    context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                        target.outputStream().use { output -> input.copyTo(output) }
-                    } != null
-                }.getOrDefault(false)
-                if (copied) {
-                    collected += LocalFolderFile(
-                        relativePath = if (relativeDirectory.isEmpty()) {
-                            target.name
-                        } else {
-                            "$relativeDirectory/${target.name}"
-                        },
-                        localPath = target.absolutePath,
-                    )
+    private fun copyChildren(
+        parentDocumentId: String,
+        relativeDirectory: String,
+        depth: Int,
+    ) {
+        // Depth is reported, not hidden: a folder nested deeper than the guard
+        // counts as truncated so the upload summary says so.
+        if (depth > MAX_DEPTH) {
+            truncated = true
+            return
+        }
+        val childrenUri = runCatching {
+            DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocumentId)
+        }.getOrElse { failure ->
+            skipped++
+            lastFailure = failure.message
+            return
+        }
+
+        val query = runCatching {
+            context.contentResolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                ),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    if (limitReached()) {
+                        truncated = true
+                        return@use
+                    }
+                    val documentId = cursor.getString(0) ?: continue
+                    val displayName = cursor.getString(1) ?: continue
+                    val mimeType = cursor.getString(2).orEmpty()
+
+                    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        val childDirectory = displayName.safeFileName()
+                        copyChildren(
+                            parentDocumentId = documentId,
+                            relativeDirectory = if (relativeDirectory.isEmpty()) {
+                                childDirectory
+                            } else {
+                                "$relativeDirectory/$childDirectory"
+                            },
+                            depth = depth + 1,
+                        )
+                        // Only the file/size budget stops the whole walk; a
+                        // folder that was merely too deep still lets its
+                        // siblings be copied.
+                        if (limitReached()) {
+                            truncated = true
+                            return@use
+                        }
+                        continue
+                    }
+
+                    val directory = File(targetDirectory, relativeDirectory).apply { mkdirs() }
+                    val target = uniqueTarget(directory, displayName)
+                    val sourceUri =
+                        DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
+                    val copied = runCatching {
+                        context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                            target.outputStream().use { output -> input.copyTo(output) }
+                        } != null
+                    }.getOrElse { failure ->
+                        lastFailure = failure.message
+                        false
+                    }
+                    if (copied) {
+                        files += LocalFolderFile(
+                            relativePath = if (relativeDirectory.isEmpty()) {
+                                target.name
+                            } else {
+                                "$relativeDirectory/${target.name}"
+                            },
+                            localPath = target.absolutePath,
+                        )
+                        bytes += target.length()
+                    } else {
+                        skipped++
+                    }
                 }
             }
+        }
+        query.onFailure { failure ->
+            skipped++
+            lastFailure = failure.message
         }
     }
 }
@@ -193,6 +263,13 @@ private fun documentName(context: Context, treeUri: Uri, documentId: String): St
 private fun String.safeFileName(): String =
     substringAfterLast('/').substringAfterLast('\\').replace(':', '_').ifBlank { "berkas" }
 
-private const val MAX_DEPTH = 8
-private const val MAX_FILES = 500
+/** Nesting guard only; real trees are rarely deeper and deeper ones are reported. */
+private const val MAX_DEPTH = 24
+
+/** Generous ceiling: a storage folder may hold any number of documents. */
+private const val MAX_FILES = 5_000
+
+/** Per-pick copy budget, further capped to half of the free cache space. */
+private const val MAX_BYTES = 4L * 1024 * 1024 * 1024
+
 private const val MAX_CACHE_AGE_MILLIS = 24L * 60 * 60 * 1000

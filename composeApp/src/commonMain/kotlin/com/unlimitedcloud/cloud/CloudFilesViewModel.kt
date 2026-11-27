@@ -24,6 +24,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import okio.FileSystem
+import okio.Path.Companion.toPath
 
 enum class FileSort(val label: String) {
     Newest("Terbaru"),
@@ -79,6 +81,10 @@ data class ExplorerUiState(
     val gallerySyncedCount: Int = 0,
     val autoSaveSupported: Boolean = false,
     val autoSavePhotos: Boolean = false,
+    /** True when the platform has a notification shade to post into. */
+    val notificationsSupported: Boolean = false,
+    /** False when notifications are blocked; Settings offers a shortcut to fix it. */
+    val notificationsEnabled: Boolean = true,
     /** Bumped when a cover becomes available so cards retry their thumbnail. */
     val coverRevision: Int = 0,
 ) {
@@ -144,6 +150,14 @@ class CloudFilesViewModel(
     private val mediaSaver: MediaSaver,
     private val scope: CoroutineScope,
 ) {
+    /**
+     * Running and finished transfers go to the system notification shade where
+     * the platform has one; the in-app banner stays the foreground feedback.
+     * Declared before the state because the first snapshot asks whether posting
+     * is currently allowed.
+     */
+    private val notifier: TransferNotifier = createTransferNotifier()
+
     private val state = MutableStateFlow(
         ExplorerUiState(
             gallerySupported = gallerySource.supported,
@@ -155,6 +169,8 @@ class CloudFilesViewModel(
             gallerySyncedCount = preferences.gallerySyncedKeys().size,
             autoSaveSupported = mediaSaver.supported,
             autoSavePhotos = preferences.autoSavePhotos(),
+            notificationsSupported = notifier.supported,
+            notificationsEnabled = !notifier.supported || notifier.enabled,
         ),
     )
     val uiState: StateFlow<ExplorerUiState> = state.asStateFlow()
@@ -162,12 +178,6 @@ class CloudFilesViewModel(
     init {
         refreshBackgroundSchedule()
     }
-
-    /**
-     * Final transfer results go to the system notification shade where the
-     * platform has one; the in-app banner stays the foreground feedback.
-     */
-    private val notifier: TransferNotifier = createTransferNotifier()
 
     private var transferCounter = 0L
     private var refreshJob: Job? = null
@@ -350,13 +360,20 @@ class CloudFilesViewModel(
      */
     fun uploadFolder(selection: LocalFolderSelection, folder: String?) {
         if (selection.files.isEmpty()) {
-            reportError("Folder ${selection.name} tidak berisi berkas")
+            reportError(
+                if (selection.incomplete) {
+                    "Tidak ada berkas yang bisa dibaca dari ${selection.name}"
+                } else {
+                    "Folder ${selection.name} tidak berisi berkas"
+                },
+            )
             return
         }
         val base = normalizeFolder(folder) ?: selection.name.ifBlank { "folder" }
         logDiagnostic(
             LOG_TAG,
-            "unggah folder: ${selection.name} (${selection.files.size} berkas) → $base",
+            "unggah folder: ${selection.name} (${selection.files.size} berkas, " +
+                "dilewati ${selection.skipped}, terpotong ${selection.truncated}) → $base",
         )
         startUploads(
             requests = selection.files.map { file ->
@@ -367,10 +384,21 @@ class CloudFilesViewModel(
                 )
             },
             summary = "${selection.files.size} berkas dari ${selection.name}",
+            cacheRoot = selection.cacheRoot,
+            note = when {
+                selection.truncated -> "batas pemindaian tercapai, sebagian berkas belum ikut"
+                selection.skipped > 0 -> "${selection.skipped} berkas tidak bisa dibaca"
+                else -> null
+            },
         )
     }
 
-    private fun startUploads(requests: List<UploadRequest>, summary: String?) {
+    private fun startUploads(
+        requests: List<UploadRequest>,
+        summary: String?,
+        cacheRoot: String? = null,
+        note: String? = null,
+    ) {
         if (requests.isEmpty()) return
         val single = requests.size == 1
         val first = requests.first().localPath.fileName()
@@ -398,9 +426,12 @@ class CloudFilesViewModel(
             var uploaded = 0
             var failed = 0
 
-            requests.forEach { request ->
+            requests.forEachIndexed { index, request ->
                 val transferId = "transfer-${++transferCounter}"
                 val name = request.localPath.fileName()
+                // One ongoing notification for the whole batch, updated instead
+                // of stacking a second progress bar per file.
+                notifier.progress("Mengunggah berkas", "${index + 1}/${requests.size} · $name")
                 state.update { current ->
                     current.copy(
                         transfers = (listOf(
@@ -424,8 +455,17 @@ class CloudFilesViewModel(
                         logDiagnostic(LOG_TAG, "unggah gagal: $name: ${failure.message}")
                     },
                 )
+                notifier.progress(
+                    "Mengunggah berkas",
+                    "${index + 1}/${requests.size} selesai · $uploaded berhasil" +
+                        (if (failed > 0) ", $failed gagal" else ""),
+                )
             }
 
+            notifier.clearProgress()
+            // The cache copies are only needed while TDLib uploads them; keeping
+            // them filled the cache after a few folder uploads.
+            cacheRoot?.let { root -> deleteCacheCopy(root) }
             if (uploaded > 0) refresh()
             state.update {
                 it.copy(
@@ -433,7 +473,7 @@ class CloudFilesViewModel(
                         single && failed == 0 -> "Unggahan $first selesai"
                         uploaded > 0 -> "$uploaded berkas diunggah"
                         else -> null
-                    },
+                    }?.let { message -> note?.let { "$message · $it" } ?: message },
                     error = if (failed > 0) {
                         if (single) "$first gagal diunggah" else "$failed berkas gagal diunggah"
                     } else {
@@ -444,13 +484,18 @@ class CloudFilesViewModel(
 
             // The system notification is the only result the user sees when the
             // app is no longer in the foreground.
+            val noteSuffix = note?.let { " · $it" }.orEmpty()
+            val notifyWithNote: (String, String) -> Unit = { title, message ->
+                notifyTransfer(title, message + noteSuffix)
+            }
             if (failed > 0) {
                 notifyTransfer(
                     "Unggahan gagal",
-                    if (single) "$first gagal diunggah" else "$failed dari ${requests.size} berkas gagal",
+                    (if (single) "$first gagal diunggah" else "$failed dari ${requests.size} berkas gagal") +
+                        noteSuffix,
                 )
             } else {
-                notifyTransfer(
+                notifyWithNote(
                     "Unggahan selesai",
                     if (single) {
                         "$first tersimpan di Telegram"
@@ -473,11 +518,30 @@ class CloudFilesViewModel(
         runCatching { notifier.notify(title, message) }
     }
 
-    /**
-     * Downloads [file] and hands the local path to [onDownloaded]. Used by the
-     * share action, which needs TDLib's local copy before it can build an
-     * `ACTION_SEND` intent.
-     */
+    /** Re-reads whether system notifications may be posted, after the permission dialog. */
+    fun refreshNotificationState() {
+        if (!notifier.supported) return
+        val enabled = notifier.enabled
+        state.update { current ->
+            if (current.notificationsEnabled == enabled) current else current.copy(notificationsEnabled = enabled)
+        }
+    }
+
+    fun openNotificationSettings() {
+        if (!notifier.openSettings()) {
+            reportError("Pengaturan notifikasi tidak bisa dibuka di perangkat ini")
+        }
+    }
+
+    /** Deletes the copies a picked folder left in the cache, once TDLib is done. */
+    private suspend fun deleteCacheCopy(root: String) = withContext(Dispatchers.Default) {
+        runCatching { FileSystem.SYSTEM.deleteRecursively(root.toPath()) }
+        Unit
+    }
+
+    /** Local copies handed out for previews, so reopening a file is instant. */
+    private val previewPaths = mutableMapOf<Long, String>()
+
     private val thumbnailCache = mutableMapOf<Int, String>()
     private val missingThumbnails = mutableSetOf<Int>()
     private val coverPaths = mutableMapOf<Long, String>()
@@ -490,6 +554,11 @@ class CloudFilesViewModel(
         this[key] = value
     }
 
+    /**
+     * Downloads [file] and hands the local path to [onDownloaded]. Used by the
+     * share action, which needs TDLib's local copy before it can build an
+     * `ACTION_SEND` intent.
+     */
     fun download(file: CloudFile, onDownloaded: (String) -> Unit = {}) {
         val alreadyRunning = state.value.transfers.any {
             it.direction == TransferDirection.Download &&
@@ -519,6 +588,7 @@ class CloudFilesViewModel(
                 error = null,
             )
         }
+        notifier.progress("Mengunduh berkas", file.name)
 
         scope.launch {
             runCatching {
@@ -542,6 +612,7 @@ class CloudFilesViewModel(
                                 ?: "Tersimpan di cache aplikasi: ${file.name}",
                         )
                     }
+                    notifier.clearProgress()
                     notifyTransfer("Unduhan selesai", "${file.name} siap dipakai")
                     onDownloaded(path)
                 }
@@ -562,12 +633,29 @@ class CloudFilesViewModel(
         onLoaded: (String) -> Unit,
         onFailed: (String) -> Unit = {},
     ) {
+        // Re-opening a file used to start the download request again. A copy
+        // this session already produced is handed out immediately.
+        cachedPreviewPath(file.messageId)?.let { path ->
+            onLoaded(path)
+            return
+        }
         logDiagnostic(LOG_TAG, "pratinjau mulai: ${file.name} (file ${file.fileId})")
         scope.launch {
+            // Already downloaded by a transfer or an earlier preview: read it
+            // from TDLib's cache instead of asking for the bytes again.
+            val cached = runCatching { repository.cachedFilePath(file.fileId) }.getOrNull()
+            if (cached != null) {
+                rememberPreviewPath(file.messageId, cached)
+                rememberCover(file, cached)
+                logDiagnostic(LOG_TAG, "pratinjau dari cache: ${file.name}")
+                onLoaded(cached)
+                return@launch
+            }
             runCatching { repository.download(file.fileId, onProgress = onProgress) }
                 .onSuccess { path ->
                     // The dialog shows the cover right away for older files that had
                     // no thumbnail until this preview cached the full image.
+                    rememberPreviewPath(file.messageId, path)
                     rememberCover(file, path)
                     onLoaded(path)
                 }
@@ -576,6 +664,22 @@ class CloudFilesViewModel(
                     onFailed(failure.message ?: "Gagal memuat pratinjau")
                 }
         }
+    }
+
+    private fun cachedPreviewPath(messageId: Long): String? {
+        val path = previewPaths[messageId] ?: return null
+        if (!FileSystem.SYSTEM.exists(path.toPath())) {
+            previewPaths.remove(messageId)
+            return null
+        }
+        return path
+    }
+
+    private fun rememberPreviewPath(messageId: Long, path: String) {
+        if (messageId !in previewPaths && previewPaths.size >= MAX_PREVIEW_CACHE_ENTRIES) {
+            previewPaths.keys.firstOrNull()?.let { previewPaths.remove(it) }
+        }
+        previewPaths[messageId] = path
     }
 
     /**
@@ -727,7 +831,8 @@ class CloudFilesViewModel(
             var saved = 0
             var failed = 0
 
-            files.forEach { file ->
+            files.forEachIndexed { index, file ->
+                notifier.progress("Mengunduh berkas", "${index + 1}/${files.size} · ${file.name}")
                 val id = "transfer-${++transferCounter}"
                 addTransfer(
                     TransferItem(
@@ -768,6 +873,7 @@ class CloudFilesViewModel(
                 )
             }
 
+            notifier.clearProgress()
             state.update {
                 it.copy(
                     status = if (saved > 0) "$saved berkas diunduh" else null,
@@ -815,6 +921,7 @@ class CloudFilesViewModel(
     fun forgotAccount() {
         channelManager.forget()
         preferences.clearAccountData()
+        previewPaths.clear()
         thumbnailCache.clear()
         missingThumbnails.clear()
         coverPaths.clear()
@@ -887,17 +994,18 @@ class CloudFilesViewModel(
     }
 
     /**
-     * Uploads every new image from the chosen folders into the "Galeri" folder of
-     * the storage group, reading them in batches of [GALLERY_BATCH_SIZE] so a
-     * large folder does not have to be copied to the cache at once. Runs once per
-     * app session when auto sync is enabled, and on demand from Settings.
+     * Uploads every new file - any type, from every subfolder - into the
+     * "Galeri" folder of the storage group, keeping the folder path it had on
+     * disk. Files are read in batches of [GALLERY_BATCH_SIZE] so a large folder
+     * does not have to be copied to the cache at once. Runs once per app session
+     * when auto sync is enabled, and on demand from Settings.
      *
      * @param perFolderLimit how many files one folder may contribute; the
      *   background worker passes a small number to stay inside its time window.
      */
     fun syncGallery(auto: Boolean = false, perFolderLimit: Int = Int.MAX_VALUE) {
         if (!gallerySource.supported) {
-            if (!auto) reportError("Sinkronisasi galeri hanya tersedia di Android")
+            if (!auto) reportError("Sinkron folder hanya tersedia di Android")
             return
         }
         // The automatic entry point must respect the toggle; only the explicit
@@ -906,7 +1014,7 @@ class CloudFilesViewModel(
 
         val folders = preferences.galleryFolders()
         if (folders.isEmpty()) {
-            if (!auto) reportError("Pilih folder galeri terlebih dahulu")
+            if (!auto) reportError("Pilih folder yang akan disinkronkan terlebih dahulu")
             return
         }
 
@@ -934,6 +1042,8 @@ class CloudFilesViewModel(
                 return@launch
             }
 
+            notifier.progress("Sinkron folder", "Memeriksa folder pilihan…")
+
             var uploaded = 0
             var failed = 0
 
@@ -960,7 +1070,7 @@ class CloudFilesViewModel(
                 while (folderUploaded + folderFailed < perFolderLimit) {
                     val remaining = perFolderLimit - folderUploaded - folderFailed
                     val batch = runCatching {
-                        gallerySource.pendingPhotos(
+                        gallerySource.pendingFiles(
                             folder = folder,
                             alreadySynced = attempted,
                             limit = minOf(GALLERY_BATCH_SIZE, remaining),
@@ -978,15 +1088,19 @@ class CloudFilesViewModel(
                     val syncedKeys = mutableListOf<String>()
                     val failedKeys = mutableListOf<String>()
 
-                    for (photo in batch) {
-                        attempted += photo.key
+                    for (file in batch) {
+                        attempted += file.key
+                        notifier.progress(
+                            "Sinkron folder",
+                            "${folder.name} · ${file.name}",
+                        )
                         val transferId = "transfer-${++transferCounter}"
                         state.update { current ->
                             current.copy(
                                 transfers = (listOf(
                                     TransferItem(
                                         id = transferId,
-                                        fileName = photo.name,
+                                        fileName = file.name,
                                         direction = TransferDirection.Upload,
                                         progress = 0f,
                                     ),
@@ -994,19 +1108,29 @@ class CloudFilesViewModel(
                             )
                         }
 
-                        val result = uploadFile(transferId, chatId, photo.localPath, GALLERY_FOLDER)
-                        gallerySource.release(listOf(photo))
+                        // Recreate the tree: a file from Liburan/Pantai lands in
+                        // Galeri/Liburan/Pantai instead of being flattened.
+                        val target = if (file.relativeDirectory.isBlank()) {
+                            GALLERY_FOLDER
+                        } else {
+                            "$GALLERY_FOLDER/${file.relativeDirectory}"
+                        }
+                        val result = uploadFile(transferId, chatId, file.localPath, target)
+                        gallerySource.release(listOf(file))
 
                         result.fold(
                             onSuccess = {
                                 folderUploaded++
-                                syncedKeys += photo.key
-                                logDiagnostic(LOG_TAG, "galeri tersinkron: ${photo.name}")
+                                syncedKeys += file.key
+                                logDiagnostic(LOG_TAG, "sinkron folder: ${file.name}")
                             },
                             onFailure = { failure ->
                                 folderFailed++
-                                failedKeys += photo.key
-                                logDiagnostic(LOG_TAG, "galeri gagal: ${photo.name}: ${failure.message}")
+                                failedKeys += file.key
+                                logDiagnostic(
+                                    LOG_TAG,
+                                    "sinkron folder gagal: ${file.name}: ${failure.message}",
+                                )
                             },
                         )
                     }
@@ -1024,6 +1148,16 @@ class CloudFilesViewModel(
                 failed += folderFailed
             }
 
+            notifier.clearProgress()
+            if (uploaded > 0) {
+                notifyTransfer(
+                    "Sinkron folder selesai",
+                    "$uploaded berkas tersimpan di folder Galeri",
+                )
+            } else if (failed > 0) {
+                notifyTransfer("Sinkron folder gagal", "$failed berkas tidak bisa diunggah")
+            }
+
             if (uploaded > 0) refresh()
 
             val stamp = platformTimestamp()
@@ -1034,11 +1168,11 @@ class CloudFilesViewModel(
                     galleryLastSync = stamp,
                     gallerySyncedCount = preferences.gallerySyncedKeys().size,
                     status = when {
-                        uploaded > 0 -> "$uploaded foto galeri diunggah"
-                        failed == 0 -> "Galeri sudah sinkron"
+                        uploaded > 0 -> "$uploaded berkas disinkronkan"
+                        failed == 0 -> "Folder sudah sinkron"
                         else -> null
                     },
-                    error = if (failed > 0) "$failed foto gagal diunggah" else null,
+                    error = if (failed > 0) "$failed berkas gagal disinkronkan" else null,
                 )
             }
         }
@@ -1134,6 +1268,7 @@ class CloudFilesViewModel(
         // Uploads report their own batch result in startUploads; downloads have
         // no other surface once the app is in the background.
         if (transfer?.direction == TransferDirection.Download) {
+            notifier.clearProgress()
             notifyTransfer("Unduhan gagal", "${transfer.fileName}: $message")
         }
     }
@@ -1183,6 +1318,7 @@ class CloudFilesViewModel(
         const val GALLERY_FOLDER = "Galeri"
         const val MAX_GALLERY_ATTEMPTS = 3
         const val MAX_COVER_CACHE_ENTRIES = 500
+        const val MAX_PREVIEW_CACHE_ENTRIES = 12
     }
 }
 

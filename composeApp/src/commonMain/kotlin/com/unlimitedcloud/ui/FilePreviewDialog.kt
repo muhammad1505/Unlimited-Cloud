@@ -111,6 +111,14 @@ fun FilePreviewDialog(
     var progress by remember(file.messageId) { mutableStateOf<Float?>(null) }
     // Retry re-runs the download effect without closing the dialog.
     var attempt by remember(file.messageId) { mutableStateOf(0) }
+    // The card cover is a few KB and usually already cached, so the dialog
+    // paints something familiar while the full file is still on its way.
+    var coverPath by remember(file.messageId) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(file.messageId) {
+        if (!previewable) return@LaunchedEffect
+        coverPath = viewModel.cover(file)
+    }
 
     LaunchedEffect(file.messageId, attempt) {
         if (!previewable) return@LaunchedEffect
@@ -246,7 +254,13 @@ fun FilePreviewDialog(
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
                             shape = panelShape,
                         )
-                        .padding(if (previewable && localPath != null) 10.dp else 20.dp),
+                        .padding(
+                            if (previewable && (localPath != null || coverPath != null)) {
+                                10.dp
+                            } else {
+                                20.dp
+                            },
+                        ),
                     contentAlignment = Alignment.Center,
                 ) {
                     when {
@@ -276,6 +290,31 @@ fun FilePreviewDialog(
                                 },
                             ) {
                                 Text("Coba lagi")
+                            }
+                        }
+
+                        // Instant feedback: the cover is on screen while the full
+                        // file downloads, instead of an empty spinner.
+                        coverPath != null -> Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            ImagePreview(file = file, path = coverPath.orEmpty())
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Text(
+                                    text = progress
+                                        ?.let { "Memuat versi penuh ${(it * 100).toInt()}%" }
+                                        ?: "Memuat versi penuh…",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         }
 

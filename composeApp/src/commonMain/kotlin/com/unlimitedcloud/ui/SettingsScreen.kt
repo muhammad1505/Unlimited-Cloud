@@ -30,6 +30,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -100,6 +101,10 @@ fun SettingsScreen(
         }
     }
 
+    // The user may have blocked notifications since the last visit; the card
+    // below then offers the system settings shortcut.
+    LaunchedEffect(Unit) { viewModel.refreshNotificationState() }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -166,8 +171,10 @@ fun SettingsScreen(
 
         AboutCard(
             logCount = logEntries.size,
+            state = filesState,
             onOpenChangelog = onOpenChangelog,
             onOpenLog = onOpenLog,
+            onOpenNotificationSettings = viewModel::openNotificationSettings,
         )
 
         OutlinedButton(
@@ -206,7 +213,7 @@ fun SettingsScreen(
     if (showResetGallery) {
         ConfirmDialog(
             title = "Atur ulang riwayat sinkron?",
-            message = "Riwayat foto yang sudah diunggah akan dikosongkan. Foto lama " +
+            message = "Riwayat berkas yang sudah diunggah akan dikosongkan. Berkas lama " +
                 "dianggap baru pada sinkron berikutnya, jadi bisa terunggah ulang. " +
                 "Tindakan ini tidak menghapus berkas di Telegram.",
             confirmLabel = "Atur ulang",
@@ -327,7 +334,7 @@ private fun GalleryCard(
 ) {
     SurfaceCard(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(
-            title = "Sinkron foto",
+            title = "Sinkron folder",
             action = {
                 if (state.gallerySupported) {
                     val statusColor = when {
@@ -348,9 +355,10 @@ private fun GalleryCard(
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Foto dari folder yang Anda pilih diunggah ke topik Galeri di grup " +
-                "penyimpanan Telegram. Pemilih folder sistem dipakai, jadi tidak perlu " +
-                "izin penyimpanan.",
+            text = "Semua berkas dari folder yang Anda pilih - semua jenis, termasuk " +
+                "subfoldernya - diunggah ke topik Galeri di grup penyimpanan Telegram " +
+                "dengan struktur folder yang sama. Pemilih folder sistem dipakai, jadi " +
+                "tidak perlu izin penyimpanan.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -369,7 +377,7 @@ private fun GalleryCard(
         Spacer(Modifier.height(6.dp))
         InfoRow(
             icon = AppIcons.Gallery,
-            title = "Folder foto",
+            title = "Folder sinkron",
             value = when (state.galleryFolders.size) {
                 0 -> "Belum dipilih"
                 1 -> state.galleryFolders.first().name
@@ -429,8 +437,8 @@ private fun GalleryCard(
 
         ToggleRow(
             title = "Unggah otomatis",
-            description = "Saat aplikasi dibuka, semua foto baru di folder terpilih " +
-                "diunggah. Jadwal latar belakang mengambil beberapa foto tiap putaran " +
+            description = "Saat aplikasi dibuka, semua berkas baru di folder terpilih " +
+                "diunggah. Jadwal latar belakang mengambil beberapa berkas tiap putaran " +
                 "agar tidak melewati batas waktu sistem.",
             checked = state.galleryAutoSync,
             onCheckedChange = onGalleryAutoSyncChange,
@@ -456,8 +464,8 @@ private fun GalleryCard(
         )
         InfoRow(
             icon = AppIcons.Check,
-            title = "Foto terkirim",
-            value = "${state.gallerySyncedCount} foto tercatat di perangkat ini",
+            title = "Berkas terkirim",
+            value = "${state.gallerySyncedCount} berkas tercatat di perangkat ini",
             tint = Color(0xFF10B981),
         )
 
@@ -584,8 +592,10 @@ private fun BatteryCard(
 @Composable
 private fun AboutCard(
     logCount: Int,
+    state: ExplorerUiState,
     onOpenChangelog: () -> Unit,
     onOpenLog: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
 ) {
     SurfaceCard(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(title = "Tentang & bantuan")
@@ -623,6 +633,23 @@ private fun AboutCard(
             value = "$logCount baris tersimpan di perangkat ini",
             onClick = onOpenLog,
         )
+        // Blocked notifications are silent by design, which looks like the app
+        // never notifies at all. Say it and offer the one tap that fixes it.
+        if (state.notificationsSupported && !state.notificationsEnabled) {
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 4.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
+            InfoRow(
+                icon = AppIcons.Info,
+                title = "Notifikasi diblokir",
+                value = "Progres dan hasil transfer tidak muncul di status bar.",
+                tint = MaterialTheme.colorScheme.error,
+            )
+            TextButton(onClick = onOpenNotificationSettings) {
+                Text("Buka pengaturan notifikasi")
+            }
+        }
     }
 }
 
