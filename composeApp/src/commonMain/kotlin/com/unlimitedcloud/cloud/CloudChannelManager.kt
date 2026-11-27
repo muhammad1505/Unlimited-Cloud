@@ -2,6 +2,7 @@ package com.unlimitedcloud.cloud
 
 import com.unlimitedcloud.log.LOG_TAG
 import com.unlimitedcloud.log.logDiagnostic
+import com.unlimitedcloud.platform.appIconFilePath
 import com.unlimitedcloud.settings.AppPreferences
 import com.unlimitedcloud.tdjson.TdJsonSession
 import kotlinx.coroutines.delay
@@ -53,6 +54,9 @@ class CloudChannelManager(
     companion object {
         const val ROOT_STORAGE_TITLE = "UNLIMITED_CLOUD_ROOT_V1"
 
+        /** Telegram rejects a chat title longer than this. */
+        const val CHAT_TITLE_LIMIT = 128
+
         private const val ROOT_STORAGE_DESCRIPTION =
             "Unlimited Cloud storage root (v1). Every topic is a folder; renaming or " +
                 "deleting this group orphans uploaded files."
@@ -103,8 +107,26 @@ class CloudChannelManager(
         var savedState = Check.Missing
         val saved = preferences.cloudRootChatId()
         if (saved != null) {
-            savedState = checkWithRetries(saved)
+            // The stored id is proof enough that the chat is ours. The group can
+            // be renamed from Settings or straight from Telegram, and requiring
+            // the default title made such a rename look like a deleted group: the
+            // app then created a new one and orphaned every uploaded file.
+            savedState = checkWithRetries(saved, trusted = true)
             if (savedState == Check.Valid) return ready(saved)
+            if (savedState == Check.NeedsTopics) {
+                // Topics were switched off in Telegram. Switching them back on
+                // keeps the history; deleting the group would orphan the files.
+                logDiagnostic(LOG_TAG, "mengaktifkan ulang topik di grup $saved")
+                if (enableTopics(saved, trusted = true) &&
+                    checkChat(saved, trusted = true) == Check.Valid
+                ) {
+                    return ready(saved)
+                }
+                state.value = CloudChannelState.Failed(
+                    "Topik forum tidak bisa diaktifkan lagi di grup penyimpanan",
+                )
+                return null
+            }
             // A channel from a build before 1.3.0 cannot host topics, so it is
             // removed before the forum group is created rather than kept next to
             // it with the same title.
@@ -172,7 +194,7 @@ class CloudChannelManager(
         return ready(created)
     }
 
-    private enum class Check { Valid, Legacy, Missing, Unknown }
+    private enum class Check { Valid, NeedsTopics, Legacy, Missing, Unknown }
 
     private data class StorageChat(val chatId: Long, val isForum: Boolean)
 
@@ -185,10 +207,10 @@ class CloudChannelManager(
         return chatId
     }
 
-    private suspend fun checkWithRetries(chatId: Long): Check {
+    private suspend fun checkWithRetries(chatId: Long, trusted: Boolean = false): Check {
         var result = Check.Missing
         for (attempt in 0 until CHECK_ATTEMPTS) {
-            result = checkChat(chatId)
+            result = checkChat(chatId, trusted)
             if (result != Check.Unknown) return result
             delay(CHECK_DELAY_MILLIS * (attempt + 1))
         }
@@ -196,12 +218,17 @@ class CloudChannelManager(
     }
 
     /**
-     * Whether [chatId] is the storage chat this app owns. A chat with the right
-     * title that cannot host topics is reported as [Check.Legacy] so it can be
-     * deleted before a forum group is created; errors that do not say the
-     * chat is missing stay [Check.Unknown].
+     * Whether [chatId] is the storage chat this app owns.
+     *
+     * [trusted] is set for an id read from preferences: it is the strongest
+     * signal available, so the current title does not matter and a renamed
+     * group still counts. Untrusted chats only count when their title is one
+     * this app hands out, which is how leftovers are recognised. A chat that
+     * cannot host topics is reported as [Check.Legacy] (delete it) or, when
+     * trusted, as [Check.NeedsTopics] (turn topics back on). Errors that do not
+     * say the chat is missing stay [Check.Unknown].
      */
-    private suspend fun checkChat(chatId: Long): Check {
+    private suspend fun checkChat(chatId: Long, trusted: Boolean = false): Check {
         val chat = runCatching {
             session.call(
                 buildJsonObject {
@@ -244,21 +271,31 @@ class CloudChannelManager(
         val isForum = supergroup["is_forum"]?.jsonPrimitive?.booleanOrNull == true
         val isChannel = supergroup["is_channel"]?.jsonPrimitive?.booleanOrNull == true
         val title = chat["title"]?.jsonPrimitive?.contentOrNull.orEmpty().trim()
-        val isStorageTitle = title.startsWith(ROOT_STORAGE_TITLE)
+        // The user may rename the group (Settings or Telegram), so the title is
+        // only an ownership hint for a chat found by searching; a stored id is
+        // trusted on its own.
+        val isOwnTitle = title.startsWith(ROOT_STORAGE_TITLE) ||
+            (preferences.cloudRootTitle()?.let { it == title } == true)
 
         return when {
-            isForum && !isChannel && isStorageTitle -> Check.Valid
-            // Our own chat, but not a private forum group yet.
-            isStorageTitle -> Check.Legacy
+            isChannel -> if (trusted || isOwnTitle) Check.Legacy else Check.Missing
+            isForum -> if (trusted || isOwnTitle) Check.Valid else Check.Missing
+            // Our own supergroup with topics switched off: they can be turned
+            // back on, which keeps the files that a new group would orphan.
+            trusted -> Check.NeedsTopics
+            // Our own chat, but too old to host topics.
+            isOwnTitle -> Check.Legacy
             // Someone else's chat with a similar title: leave it alone.
             else -> Check.Missing
         }
     }
 
     private suspend fun findExistingChat(): StorageChat? {
-        // Server-side search covers chats that are not loaded locally yet.
-        val serverIds = searchChatIds("searchChatsOnServer")
-            .ifEmpty { searchChatIds("searchChats") }
+        // Server-side search covers chats that are not loaded locally yet. Both
+        // the default title and the name the user gave the group are searched.
+        val terms = scanTerms()
+        val serverIds = terms.flatMap { searchChatIds("searchChatsOnServer", it) }
+            .ifEmpty { terms.flatMap { searchChatIds("searchChats", it) } }
 
         val knownIds = knownChatIds()
 
@@ -273,15 +310,19 @@ class CloudChannelManager(
         return legacy?.let { StorageChat(it, isForum = false) }
     }
 
-    private suspend fun searchChatIds(type: String): List<Long> = runCatching {
+    private suspend fun searchChatIds(type: String, query: String): List<Long> = runCatching {
         session.call(
             buildJsonObject {
                 put("@type", type)
-                put("query", ROOT_STORAGE_TITLE)
+                put("query", query)
                 put("limit", 20)
             },
         )["chat_ids"]?.jsonArray?.mapNotNull { it.jsonPrimitive.longOrNull }.orEmpty()
     }.getOrDefault(emptyList())
+
+    /** Titles this app may have given the storage group, default first. */
+    private fun scanTerms(): List<String> =
+        listOfNotNull(ROOT_STORAGE_TITLE, preferences.cloudRootTitle()).distinct()
 
     /**
      * Creates a private supergroup and turns it into a forum.
@@ -310,12 +351,14 @@ class CloudChannelManager(
 
         if (checkWithRetries(chatId) == Check.Valid) {
             logDiagnostic(LOG_TAG, "grup topik siap: $chatId")
+            applyIconBestEffort(chatId)
             return chatId
         }
 
         logDiagnostic(LOG_TAG, "mengaktifkan topik di grup $chatId")
         if (enableTopics(chatId)) {
             logDiagnostic(LOG_TAG, "grup topik siap: $chatId")
+            applyIconBestEffort(chatId)
             return chatId
         }
 
@@ -330,7 +373,9 @@ class CloudChannelManager(
             session.call(
                 buildJsonObject {
                     put("@type", "createNewSupergroupChat")
-                    put("title", ROOT_STORAGE_TITLE)
+                    // A name the user picked in Settings is used right away instead
+                    // of creating the group with the sentinel and renaming after.
+                    put("title", preferences.cloudRootTitle() ?: ROOT_STORAGE_TITLE)
                     put("is_forum", isForum)
                     put("is_channel", false)
                     put("description", ROOT_STORAGE_DESCRIPTION)
@@ -378,7 +423,7 @@ class CloudChannelManager(
     }
 
     /** Turns topics on and waits for Telegram to report the group as a forum. */
-    private suspend fun enableTopics(chatId: Long): Boolean {
+    private suspend fun enableTopics(chatId: Long, trusted: Boolean = false): Boolean {
         var failure: String? = null
         repeat(FORUM_TOGGLE_ATTEMPTS) { attempt ->
             val supergroupId = supergroupIdOf(chatId)
@@ -399,7 +444,7 @@ class CloudChannelManager(
                 }
             }
             repeat(3) {
-                if (checkChat(chatId) == Check.Valid) return true
+                if (checkChat(chatId, trusted) == Check.Valid) return true
                 delay(CHECK_DELAY_MILLIS)
             }
             delay(FORUM_TOGGLE_DELAY_MILLIS * (attempt + 1))
@@ -442,8 +487,11 @@ class CloudChannelManager(
      * what makes the storage look like it is still a channel.
      */
     private suspend fun deleteLeftoverStorageChats(except: Long) {
+        val terms = scanTerms()
         val ids = runCatching {
-            (searchChatIds("searchChatsOnServer") + searchChatIds("searchChats") + knownChatIds())
+            (terms.flatMap { searchChatIds("searchChatsOnServer", it) } +
+                terms.flatMap { searchChatIds("searchChats", it) } +
+                knownChatIds())
                 .distinct()
         }.getOrDefault(emptyList())
         ids.forEach { chatId ->
@@ -481,6 +529,112 @@ class CloudChannelManager(
             )["chat_ids"]?.jsonArray?.mapNotNull { it.jsonPrimitive.longOrNull }.orEmpty()
         }.getOrDefault(emptyList())
     }
+
+    /**
+     * Renames the storage group and remembers the name.
+     *
+     * The name is stored as soon as Telegram accepts it: it becomes the second
+     * search term that finds the group again, so a renamed group stays reachable
+     * when the stored chat id is lost. Nothing else depends on the title, so the
+     * rename never touches a file or a topic.
+     */
+    suspend fun renameRoot(title: String): Result<Unit> {
+        val chatId = rootChatId()
+            ?: return Result.failure(IllegalStateException("Penyimpanan belum siap"))
+        val cleaned = title.trim()
+        if (cleaned.isEmpty()) {
+            return Result.failure(IllegalArgumentException("Nama grup tidak boleh kosong"))
+        }
+        if (cleaned.length > CHAT_TITLE_LIMIT) {
+            return Result.failure(
+                IllegalArgumentException("Nama grup maksimal $CHAT_TITLE_LIMIT karakter"),
+            )
+        }
+        val response = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "setChatTitle")
+                    put("chat_id", chatId)
+                    put("title", cleaned)
+                },
+            )
+        }.getOrElse { return Result.failure(it) }
+        if (response.isError()) {
+            return Result.failure(
+                IllegalStateException(
+                    response.messageOrNull() ?: "Nama grup ditolak Telegram",
+                ),
+            )
+        }
+        // The default sentinel stays implicit, so discovery keeps matching it.
+        preferences.setCloudRootTitle(cleaned.takeIf { it != ROOT_STORAGE_TITLE })
+        logDiagnostic(LOG_TAG, "nama grup penyimpanan diubah")
+        return Result.success(Unit)
+    }
+
+    /** Uploads the app's own icon as the storage group photo. */
+    suspend fun applyRootIcon(): Result<Unit> {
+        val chatId = rootChatId()
+            ?: return Result.failure(IllegalStateException("Penyimpanan belum siap"))
+        val path = appIconFilePath()
+            ?: return Result.failure(
+                IllegalStateException("Ikon aplikasi tidak bisa disiapkan di perangkat ini"),
+            )
+        return setRootPhoto(chatId, path)
+    }
+
+    /**
+     * Sets the group photo. TDLib wants a static photo pointing at a local file,
+     * so the icon written by [appIconFilePath] is uploaded as-is.
+     */
+    private suspend fun setRootPhoto(chatId: Long, path: String): Result<Unit> {
+        val response = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "setChatPhoto")
+                    put("chat_id", chatId)
+                    put(
+                        "photo",
+                        buildJsonObject {
+                            put("@type", "inputChatPhotoStatic")
+                            put(
+                                "photo",
+                                buildJsonObject {
+                                    put("@type", "inputFileLocal")
+                                    put("path", path)
+                                },
+                            )
+                        },
+                    )
+                },
+            )
+        }.getOrElse { return Result.failure(it) }
+        if (response.isError()) {
+            return Result.failure(
+                IllegalStateException(
+                    response.messageOrNull() ?: "Ikon grup ditolak Telegram",
+                ),
+            )
+        }
+        logDiagnostic(LOG_TAG, "ikon grup penyimpanan dipasang")
+        return Result.success(Unit)
+    }
+
+    /**
+     * Best effort: a group that is ready for uploads must not be thrown away just
+     * because its photo could not be set.
+     */
+    private suspend fun applyIconBestEffort(chatId: Long) {
+        val path = appIconFilePath() ?: return
+        setRootPhoto(chatId, path).onFailure { failure ->
+            logDiagnostic(LOG_TAG, "ikon grup tidak terpasang: ${failure.message}")
+        }
+    }
+
+    private fun rootChatId(): Long? = cachedChatId ?: preferences.cloudRootChatId()
+
+    private fun JsonObject.messageOrNull(): String? =
+        this["message"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
 
     /**
      * Deletes the storage chat of a build before 1.3.0, when files lived in a

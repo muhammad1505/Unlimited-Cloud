@@ -90,6 +90,10 @@ data class ExplorerUiState(
     val autoSavePhotos: Boolean = false,
     /** How many files a batch uploads or downloads at once (Settings). */
     val parallelTransfers: Int = 3,
+    /** Custom name of the storage group; null while it keeps the default one. */
+    val storageTitle: String? = null,
+    /** True while a rename or icon upload runs, so Settings disables both. */
+    val storageCustomizing: Boolean = false,
     /** True when the platform has a notification shade to post into. */
     val notificationsSupported: Boolean = false,
     /** False when notifications are blocked; Settings offers a shortcut to fix it. */
@@ -179,6 +183,7 @@ class CloudFilesViewModel(
             autoSaveSupported = mediaSaver.supported,
             autoSavePhotos = preferences.autoSavePhotos(),
             parallelTransfers = preferences.transferParallelism(),
+            storageTitle = preferences.cloudRootTitle(),
             notificationsSupported = notifier.supported,
             notificationsEnabled = !notifier.supported || notifier.enabled,
         ),
@@ -351,6 +356,58 @@ class CloudFilesViewModel(
 
     fun reportError(message: String) {
         state.update { it.copy(error = message, status = null) }
+    }
+
+    /**
+     * Renames the Telegram group that stores the files. Only the label changes:
+     * every folder stays a topic, so no file moves and nothing is uploaded again.
+     */
+    fun renameStorageGroup(title: String) {
+        if (state.value.storageCustomizing) return
+        scope.launch {
+            state.update { it.copy(storageCustomizing = true) }
+            val result = channelManager.renameRoot(title)
+            state.update { current ->
+                if (result.isSuccess) {
+                    current.copy(
+                        storageCustomizing = false,
+                        storageTitle = preferences.cloudRootTitle(),
+                        status = "Nama grup penyimpanan diperbarui",
+                        error = null,
+                    )
+                } else {
+                    current.copy(
+                        storageCustomizing = false,
+                        status = null,
+                        error = result.exceptionOrNull()?.message ?: "Nama grup gagal diganti",
+                    )
+                }
+            }
+        }
+    }
+
+    /** Puts the app's own launcher icon on the storage group. */
+    fun applyStorageIcon() {
+        if (state.value.storageCustomizing) return
+        scope.launch {
+            state.update { it.copy(storageCustomizing = true) }
+            val result = channelManager.applyRootIcon()
+            state.update { current ->
+                if (result.isSuccess) {
+                    current.copy(
+                        storageCustomizing = false,
+                        status = "Ikon aplikasi dipasang di grup penyimpanan",
+                        error = null,
+                    )
+                } else {
+                    current.copy(
+                        storageCustomizing = false,
+                        status = null,
+                        error = result.exceptionOrNull()?.message ?: "Ikon grup gagal dipasang",
+                    )
+                }
+            }
+        }
     }
 
     /** One file waiting its turn, with the folder it will land in. */
@@ -998,6 +1055,7 @@ class CloudFilesViewModel(
             autoSaveSupported = mediaSaver.supported,
             autoSavePhotos = preferences.autoSavePhotos(),
             parallelTransfers = preferences.transferParallelism(),
+            storageTitle = preferences.cloudRootTitle(),
         )
     }
 

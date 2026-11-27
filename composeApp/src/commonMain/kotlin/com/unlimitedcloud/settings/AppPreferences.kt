@@ -66,12 +66,25 @@ class AppPreferences(
         put(KEY_CLOUD_ROOT_CHAT_ID, chatId?.toString())
 
     /**
+     * Name the user gave the storage group, or `null` while it still uses the
+     * default sentinel title. Kept because the default title is gone once the
+     * group is renamed, and it is the second search term that finds the group
+     * again when the stored chat id is lost.
+     */
+    fun cloudRootTitle(): String? =
+        get(KEY_CLOUD_ROOT_TITLE)?.trim()?.takeIf { it.isNotEmpty() }
+
+    fun setCloudRootTitle(title: String?) =
+        put(KEY_CLOUD_ROOT_TITLE, title?.trim()?.takeIf { it.isNotEmpty() })
+
+    /**
      * Drops the keys that belong to the Telegram account. The picked gallery
      * folders are kept: those are device grants, not account data.
      */
     fun clearAccountData() {
         synchronizedBlock(lock) {
             put(KEY_CLOUD_ROOT_CHAT_ID, null)
+            put(KEY_CLOUD_ROOT_TITLE, null)
             put(KEY_GALLERY_SYNCED_KEYS, null)
             put(KEY_GALLERY_FAILED_KEYS, null)
             put(KEY_GALLERY_LAST_SYNC, null)
@@ -345,6 +358,7 @@ class AppPreferences(
     private companion object {
         const val KEY_THEME = "theme"
         const val KEY_CLOUD_ROOT_CHAT_ID = "cloud.rootChatId"
+        const val KEY_CLOUD_ROOT_TITLE = "cloud.rootTitle"
         const val KEY_LAST_SEEN_VERSION = "changelog.lastSeenVersionCode"
         const val KEY_GALLERY_AUTO_SYNC = "gallery.autoSync"
         const val KEY_GALLERY_BACKGROUND_SYNC = "gallery.backgroundSync"

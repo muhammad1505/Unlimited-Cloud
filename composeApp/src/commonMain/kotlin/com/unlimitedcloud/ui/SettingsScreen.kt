@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -58,6 +59,7 @@ import com.unlimitedcloud.settings.MIN_TRANSFER_PARALLELISM
 import com.unlimitedcloud.ui.components.ActionRow
 import com.unlimitedcloud.ui.components.AppAvatar
 import com.unlimitedcloud.ui.components.AppIcons
+import com.unlimitedcloud.ui.components.AppTextField
 import com.unlimitedcloud.ui.components.ConfirmDialog
 import com.unlimitedcloud.ui.components.InfoRow
 import com.unlimitedcloud.ui.components.SectionHeader
@@ -89,6 +91,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     var showResetGallery by remember { mutableStateOf(false) }
+    var showRenameStorage by remember { mutableStateOf(false) }
     var batteryFeedback by remember { mutableStateOf<String?>(null) }
     val logEntries by LogStore.entries.collectAsState()
 
@@ -126,6 +129,10 @@ fun SettingsScreen(
         StorageCard(
             channelState = channelState,
             state = filesState,
+            rootTitle = filesState.storageTitle,
+            customizing = filesState.storageCustomizing,
+            onRenameClick = { showRenameStorage = true },
+            onApplyIcon = viewModel::applyStorageIcon,
             onRefresh = viewModel::refresh,
         )
 
@@ -217,6 +224,18 @@ fun SettingsScreen(
         )
     }
 
+    if (showRenameStorage) {
+        StorageNameDialog(
+            initial = filesState.storageTitle.orEmpty(),
+            busy = filesState.storageCustomizing,
+            onConfirm = { name ->
+                showRenameStorage = false
+                viewModel.renameStorageGroup(name)
+            },
+            onDismiss = { showRenameStorage = false },
+        )
+    }
+
     if (showResetGallery) {
         ConfirmDialog(
             title = "Atur ulang riwayat sinkron?",
@@ -281,9 +300,69 @@ private fun AppearanceCard(
 }
 
 @Composable
+private fun StorageNameDialog(
+    initial: String,
+    busy: Boolean,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember(initial) { mutableStateOf(initial) }
+    val cleaned = name.trim()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nama grup penyimpanan") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Nama ini hanya label di Telegram. Berkas tetap di folder yang " +
+                        "sama dan grup tetap privat di akunmu.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                AppTextField(
+                    value = name,
+                    onValueChange = { if (it.length <= STORAGE_NAME_LIMIT) name = it },
+                    label = "Nama grup",
+                    enabled = !busy,
+                    supportingText = "${cleaned.length}/$STORAGE_NAME_LIMIT karakter",
+                )
+                Text(
+                    text = "Nama bawaan membantu aplikasi menemukan grup lagi setelah " +
+                        "instal ulang, jadi sebaiknya tetap unik.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(cleaned) },
+                enabled = !busy && cleaned.isNotEmpty(),
+            ) {
+                Text("Simpan")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Batal")
+            }
+        },
+        shape = RoundedCornerShape(24.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+    )
+}
+
+/** Telegram's own limit for a chat title. */
+private const val STORAGE_NAME_LIMIT = 128
+
+@Composable
 private fun StorageCard(
     channelState: CloudChannelState,
     state: ExplorerUiState,
+    rootTitle: String?,
+    customizing: Boolean,
+    onRenameClick: () -> Unit,
+    onApplyIcon: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     SurfaceCard(modifier = Modifier.fillMaxWidth()) {
@@ -310,6 +389,45 @@ private fun StorageCard(
             value = formatBytes(state.totalBytes),
             tint = MaterialTheme.colorScheme.secondary,
         )
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 2.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+        )
+        InfoRow(
+            icon = AppIcons.Tune,
+            title = "Nama grup",
+            value = rootTitle ?: "Bawaan",
+        )
+        Text(
+            text = "Nama dan ikon grup Telegram yang menyimpan berkas ini. Mengubah nama " +
+                "tidak memindahkan berkas: setiap folder tetap menjadi topik grup.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            TextButton(onClick = onRenameClick, enabled = !customizing) {
+                Icon(
+                    imageVector = AppIcons.Tune,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("Ubah nama")
+            }
+            TextButton(onClick = onApplyIcon, enabled = !customizing) {
+                Icon(
+                    imageVector = AppIcons.Cloud,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(if (customizing) "Memproses…" else "Pakai ikon aplikasi")
+            }
+        }
         Spacer(Modifier.height(2.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),

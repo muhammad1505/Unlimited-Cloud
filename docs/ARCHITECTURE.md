@@ -53,6 +53,13 @@ Channel pribadi adalah database sekaligus filesystem:
 - Daftar berkas = `getChatHistory` dengan pagination `from_message_id`.
 - Hapus = `deleteMessages` dengan `revoke = true`, dipecah per 100 id karena
   TDLib menolak permintaan yang membawa lebih banyak id sekaligus.
+- Ikon grup = ikon aplikasi. `appIconFilePath()` merender launcher icon Android
+  menjadi PNG 512 px dan menyalin `icon.png` paket di desktop, lalu
+  `setChatPhoto` menerimanya sebagai `inputChatPhotoStatic`.
+- Nama grup bisa diubah dari Pengaturan (`setChatTitle`). Karena itu id yang
+  tersimpan dianggap bukti kepemilikan: judul hanya dipakai saat grup harus
+  dicari lewat pencarian, dan grup yang topiknya dimatikan diaktifkan lagi
+  alih-alih dibuat ulang (membuat ulang akan memutus semua berkas lama).
 
 `CloudFileRepository` menangani JSON TDLib secara mentah:
 
@@ -80,6 +87,8 @@ bila berkas utama terpotong. Isinya:
 | Key | Fungsi |
 | --- | --- |
 | `theme` | `System`, `Light`, `Dark` |
+| `cloud.rootChatId` | id grup penyimpanan, agar grup tidak dibuat ulang tiap buka |
+| `cloud.rootTitle` | nama kustom grup penyimpanan (kosong = judul bawaan) |
 | `changelog.lastSeenVersionCode` | gate pop-up pembaruan |
 | `gallery.autoSync` | switch sinkronisasi otomatis |
 | `gallery.folderId` / `gallery.folderName` | folder SAF yang dipilih |
