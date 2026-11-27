@@ -21,6 +21,17 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.4.6 — 27 November 2026
+
+### Baru
+
+- Log diagnostik kini mencatat "berkas mulai" dan "berkas selesai" untuk tiap berkas dalam satu batch, jadi terlihat apakah unggahan benar-benar berjalan bersamaan atau menunggu giliran.
+
+### Perbaikan
+
+- Unggahan, unduhan, sinkron folder, dan pratinjau kini berjalan di foreground service. Menghapus aplikasi dari daftar terbaru tidak lagi mematikan proses di tengah transfer, walaupun pengoptimalan baterai sudah dikecualikan.
+- Notifikasi progres tidak lagi tertinggal di bilah atas setelah proses berhenti: notifikasi itu milik service, jadi ikut hilang bersama service, dan sisa notifikasi dari proses sebelumnya dibersihkan saat aplikasi dibuka.
+
 ## 1.4.5 — 27 November 2026
 
 ### Baru

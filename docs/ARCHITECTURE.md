@@ -146,6 +146,14 @@ tiga direktori cache unggahan (`uploads`, `gallery-sync`, `group-photo`) dan
 tidak menyentuh direktori TDLib, jadi membersihkan cache tidak pernah merusak
 sesi Telegram.
 
+Batch transfer tidak lagi bergantung pada umur Activity: dijalankan lewat
+`launchBatch`, yang memanggil `TransferSession.begin()`/`end()`. Di Android
+`TransferSession` menyalakan `TransferService` (`foregroundServiceType="dataSync"`)
+selama batch berjalan, sehingga proses tetap hidup walau aplikasi dihapus dari
+daftar terbaru. Service memakai id notifikasi yang sama dengan notifier, jadi
+progres tetap satu entri dan ikut hilang bila service berhenti; notifikasi sisa
+proses lama dibersihkan di `init` ViewModel. Desktop memakai implementasi kosong.
+
 Opsi hapus berkas asli berlaku dua-duanya: folder yang diunggah manual dan folder
 sinkron galeri (termasuk sync WorkManager, yang memanggil jalur yang sama di
 ViewModel). Folder sinkron meminta izin baca+tulis; penyedia yang menolak akses

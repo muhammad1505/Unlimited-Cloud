@@ -15,12 +15,11 @@
          banner keeps working. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- WorkManager merges this in for foreground/expedited work. Gallery sync is
-         a plain periodic worker: it never calls setForeground and never posts a
-         notification, so the app should not advertise the capability. -->
-    <uses-permission
-        android:name="android.permission.FOREGROUND_SERVICE"
-        tools:node="remove" />
+    <!-- A transfer batch keeps the process alive in a dataSync foreground service.
+         Without it, removing the app from recents killed the process mid-upload,
+         which left its progress notification stranded in the shade. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <!-- Android 11+ hides other packages from the app. The battery card opens the
          manufacturer's autostart screen by component name, which only resolves for
@@ -55,6 +54,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Holds the process while a batch runs and reuses the notifier's ongoing
+             notification, so it disappears together with the service. -->
+        <service
+            android:name="com.unlimitedcloud.platform.TransferService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
 
         <!-- WorkManager's diagnostics receiver and profileinstaller's receiver
              carry android:permission="android.permission.DUMP". They request no

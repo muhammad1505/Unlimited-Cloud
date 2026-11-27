@@ -1,6 +1,7 @@
 package com.unlimitedcloud.platform
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -23,11 +24,69 @@ import java.util.concurrent.atomic.AtomicInteger
 actual fun createTransferNotifier(): TransferNotifier =
     AndroidTransferNotifier(AndroidPlatform.requireContext())
 
+/** Id shared by the notifier and [TransferService]: both update one entry. */
+internal const val TRANSFER_PROGRESS_ID = 997
+
+private const val TRANSFER_CHANNEL_ID = "transfers"
+
+/** Creates the transfer channel on first use; a no-op on older Android. */
+internal fun ensureTransferChannel(context: Context) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    val manager = context.getSystemService(NotificationManager::class.java) ?: return
+    if (manager.getNotificationChannel(TRANSFER_CHANNEL_ID) != null) return
+    manager.createNotificationChannel(
+        NotificationChannel(
+            TRANSFER_CHANNEL_ID,
+            "Proses transfer",
+            NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply {
+            description = "Progres dan hasil unggahan, unduhan, serta sinkron folder."
+        },
+    )
+}
+
+/**
+ * The ongoing progress notification. [TransferService] posts the same one as its
+ * foreground notification, so the shade shows one live entry per batch.
+ */
+internal fun transferProgressNotification(
+    context: Context,
+    title: String,
+    message: String,
+): Notification {
+    ensureTransferChannel(context)
+    return NotificationCompat.Builder(context, TRANSFER_CHANNEL_ID)
+        .setSmallIcon(context.applicationInfo.icon)
+        .setContentTitle(title)
+        .setContentText(message)
+        .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+        // Indeterminate on purpose: TDLib reports one fraction per file, and a
+        // bar jumping backwards between files is worse than a spinner.
+        .setProgress(0, 0, true)
+        .setOngoing(true)
+        .setSilent(true)
+        .setOnlyAlertOnce(true)
+        .setPriority(NotificationCompat.PRIORITY_LOW)
+        .apply { contentIntent(context)?.let { setContentIntent(it) } }
+        .build()
+}
+
+/** Reopens the app when the transfer notification is tapped. */
+internal fun contentIntent(context: Context): PendingIntent? {
+    val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        ?: return null
+    return PendingIntent.getActivity(
+        context,
+        0,
+        launchIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+}
+
 /**
  * One ongoing notification for the running batch and one per finished or failed
  * batch, in a dedicated channel so the user can silence them without muting the
- * app entirely. Tapping any of them opens the app; nothing runs in the
- * background.
+ * app entirely. Tapping any of them opens the app.
  */
 private class AndroidTransferNotifier(private val context: Context) : TransferNotifier {
 
@@ -38,9 +97,9 @@ private class AndroidTransferNotifier(private val context: Context) : TransferNo
 
     override fun notify(title: String, message: String) {
         if (!canPost()) return
-        ensureChannel()
+        ensureTransferChannel(context)
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val notification = NotificationCompat.Builder(context, TRANSFER_CHANNEL_ID)
             .setSmallIcon(appIcon())
             .setContentTitle(title)
             .setContentText(message)
@@ -48,7 +107,7 @@ private class AndroidTransferNotifier(private val context: Context) : TransferNo
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
-            .apply { contentIntent()?.let { setContentIntent(it) } }
+            .apply { contentIntent(context)?.let { setContentIntent(it) } }
             .build()
 
         // Posting can still be refused (permission revoked, channel disabled);
@@ -58,28 +117,14 @@ private class AndroidTransferNotifier(private val context: Context) : TransferNo
 
     override fun progress(title: String, message: String) {
         if (!canPost()) return
-        ensureChannel()
-
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(appIcon())
-            .setContentTitle(title)
-            .setContentText(message)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            // Indeterminate on purpose: TDLib reports one fraction per file, and
-            // a bar jumping backwards between files is worse than a spinner.
-            .setProgress(0, 0, true)
-            .setOngoing(true)
-            .setSilent(true)
-            .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .apply { contentIntent()?.let { setContentIntent(it) } }
-            .build()
-
-        runCatching { NotificationManagerCompat.from(context).notify(PROGRESS_ID, notification) }
+        val notification = transferProgressNotification(context, title, message)
+        runCatching {
+            NotificationManagerCompat.from(context).notify(TRANSFER_PROGRESS_ID, notification)
+        }
     }
 
     override fun clearProgress() {
-        runCatching { NotificationManagerCompat.from(context).cancel(PROGRESS_ID) }
+        runCatching { NotificationManagerCompat.from(context).cancel(TRANSFER_PROGRESS_ID) }
     }
 
     override fun openSettings(): Boolean = runCatching {
@@ -94,17 +139,6 @@ private class AndroidTransferNotifier(private val context: Context) : TransferNo
     /** The app's own launcher icon instead of a generic system glyph. */
     private fun appIcon(): Int = context.applicationInfo.icon
 
-    private fun contentIntent(): PendingIntent? {
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            ?: return null
-        return PendingIntent.getActivity(
-            context,
-            0,
-            launchIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-    }
-
     private fun canPost(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(
@@ -112,27 +146,7 @@ private class AndroidTransferNotifier(private val context: Context) : TransferNo
                 Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED
 
-    private fun ensureChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(CHANNEL_ID) != null) return
-        manager.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID,
-                "Proses transfer",
-                NotificationManager.IMPORTANCE_DEFAULT,
-            ).apply {
-                description = "Progres dan hasil unggahan, unduhan, serta sinkron folder."
-            },
-        )
-    }
-
     private companion object {
-        const val CHANNEL_ID = "transfers"
-
-        /** Stable id: every update reuses the same ongoing notification. */
-        const val PROGRESS_ID = 997
-
         val ids = AtomicInteger(1000)
 
         fun nextId(): Int = ids.incrementAndGet()

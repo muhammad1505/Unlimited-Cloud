@@ -18,6 +18,7 @@ import com.unlimitedcloud.platform.createUploadThumbnail
 import com.unlimitedcloud.platform.deleteSourceFile
 import com.unlimitedcloud.platform.pickedFilesAreAppCopies
 import com.unlimitedcloud.platform.StorageUsage
+import com.unlimitedcloud.platform.TransferSession
 import com.unlimitedcloud.platform.sourceFileDeletionSupported
 import com.unlimitedcloud.platform.storageUsage
 import com.unlimitedcloud.platform.uploadCacheSupported
@@ -198,6 +199,7 @@ class CloudFilesViewModel(
     private val gallerySource: GallerySyncSource,
     private val backgroundSync: GalleryBackgroundSync,
     private val mediaSaver: MediaSaver,
+    private val transferSession: TransferSession,
     private val scope: CoroutineScope,
 ) {
     /**
@@ -235,6 +237,9 @@ class CloudFilesViewModel(
     val uiState: StateFlow<ExplorerUiState> = state.asStateFlow()
 
     init {
+        // A process killed mid-transfer leaves its ongoing notification behind;
+        // nothing can be running yet in this one, so drop it.
+        notifier.clearProgress()
         refreshBackgroundSchedule()
         refreshCacheUsage()
     }
@@ -848,6 +853,22 @@ class CloudFilesViewModel(
         )
     }
 
+    /**
+     * Runs a batch in the app scope with the platform keeping the process alive.
+     * Removing the app from recents used to cancel the upload halfway through,
+     * because nothing held the process while the batch ran.
+     */
+    private fun launchBatch(block: suspend CoroutineScope.() -> Unit) {
+        scope.launch {
+            transferSession.begin()
+            try {
+                block()
+            } finally {
+                transferSession.end()
+            }
+        }
+    }
+
     private fun startUploads(
         requests: List<UploadRequest>,
         summary: String?,
@@ -870,12 +891,12 @@ class CloudFilesViewModel(
             )
         }
 
-        scope.launch {
+        launchBatch {
             val chatId = channelManager.ensureRootChannel()
             if (chatId == null) {
                 state.update { it.copy(status = null, error = "Penyimpanan belum siap") }
                 notifyTransfer("Unggahan gagal", "Penyimpanan belum siap")
-                return@launch
+                return@launchBatch
             }
 
             var uploaded = 0
@@ -913,11 +934,19 @@ class CloudFilesViewModel(
                                 ),
                             )
 
+                            logDiagnostic(
+                                LOG_TAG,
+                                "berkas mulai: $name (paralel ${state.value.parallelTransfers})",
+                            )
                             val result = uploadFile(
                                 transferId = transferId,
                                 chatId = chatId,
                                 localPath = request.localPath,
                                 folder = request.folder,
+                            )
+                            logDiagnostic(
+                                LOG_TAG,
+                                "berkas ${if (result.isSuccess) "selesai" else "gagal"}: $name",
                             )
                             // Only after TDLib took the file: a failed or cancelled
                             // upload still needs its copy to retry from.
@@ -1151,7 +1180,7 @@ class CloudFilesViewModel(
         }
         notifier.progress("Mengunduh berkas", file.name)
 
-        scope.launch {
+        launchBatch {
             runCatching {
                 repository.download(file.fileId) { progress ->
                     updateTransfer(id) { it.copy(progress = progress) }
@@ -1618,13 +1647,13 @@ class CloudFilesViewModel(
         }
         if (!claimed) return
 
-        scope.launch {
+        launchBatch {
             val chatId = channelManager.ensureRootChannel()
             if (chatId == null) {
                 state.update {
                     it.copy(gallerySyncing = false, error = "Penyimpanan belum siap")
                 }
-                return@launch
+                return@launchBatch
             }
 
             notifier.progress("Sinkron folder", "Memeriksa folder pilihan…")

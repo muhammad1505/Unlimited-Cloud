@@ -8,9 +8,11 @@ import com.unlimitedcloud.config.TelegramConfig
 import com.unlimitedcloud.platform.GalleryBackgroundSync
 import com.unlimitedcloud.platform.GallerySyncSource
 import com.unlimitedcloud.platform.MediaSaver
+import com.unlimitedcloud.platform.TransferSession
 import com.unlimitedcloud.platform.createGalleryBackgroundSync
 import com.unlimitedcloud.platform.createGallerySyncSource
 import com.unlimitedcloud.platform.createMediaSaver
+import com.unlimitedcloud.platform.createTransferSession
 import com.unlimitedcloud.settings.AppPreferences
 import com.unlimitedcloud.tdjson.TdJsonClient
 import com.unlimitedcloud.tdjson.TdJsonSession
@@ -33,6 +35,7 @@ val appModule = module {
     single<GallerySyncSource> { createGallerySyncSource() }
     single<GalleryBackgroundSync> { createGalleryBackgroundSync() }
     single<MediaSaver> { createMediaSaver() }
+    single<TransferSession> { createTransferSession() }
     // A single instance keeps files, gallery sync and transfer progress alive
     // while the user switches between the Berkas, Transfer and Pengaturan tabs.
     single {
@@ -43,6 +46,7 @@ val appModule = module {
             gallerySource = get(),
             backgroundSync = get(),
             mediaSaver = get(),
+            transferSession = get(),
             scope = get(),
         )
     }
