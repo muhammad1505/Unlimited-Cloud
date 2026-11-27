@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -26,6 +27,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -90,7 +92,17 @@ fun TransfersScreen(
                 message = "Unggahan dan unduhan akan muncul di sini lengkap dengan progresnya.",
             )
         } else {
+            val listState = rememberLazyListState()
+            // New transfers are prepended, so the top row is the one that just
+            // started. Without this the list stayed where the user left it and
+            // the newest progress was off-screen.
+            val newestId = state.transfers.firstOrNull()?.id
+            LaunchedEffect(newestId) {
+                if (newestId != null) listState.animateScrollToItem(0)
+            }
+
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 24.dp),

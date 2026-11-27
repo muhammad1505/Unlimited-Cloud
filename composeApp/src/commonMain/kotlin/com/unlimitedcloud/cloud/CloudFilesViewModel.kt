@@ -4,16 +4,20 @@ import com.unlimitedcloud.log.LOG_TAG
 import com.unlimitedcloud.log.logDiagnostic
 import com.unlimitedcloud.log.platformTimestamp
 import com.unlimitedcloud.platform.GalleryBackgroundSync
+import com.unlimitedcloud.platform.GalleryFile
 import com.unlimitedcloud.platform.GalleryFolder
 import com.unlimitedcloud.platform.GallerySyncSource
 import com.unlimitedcloud.platform.LocalFolderSelection
 import com.unlimitedcloud.platform.MediaSaver
 import com.unlimitedcloud.platform.TransferNotifier
+import com.unlimitedcloud.platform.synchronizedBlock
 import com.unlimitedcloud.platform.createTransferNotifier
 import com.unlimitedcloud.platform.createUploadThumbnail
 import com.unlimitedcloud.settings.AppPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -180,7 +184,15 @@ class CloudFilesViewModel(
     }
 
     private var transferCounter = 0L
+    private val transferIdLock = Any()
     private var refreshJob: Job? = null
+
+    /**
+     * Transfer ids are handed out from parallel workers, so the counter is
+     * locked: two uploads starting at the same moment used to share an id and
+     * one of the rows silently updated the other.
+     */
+    private fun nextTransferId(): Long = synchronizedBlock(transferIdLock) { ++transferCounter }
 
     fun refresh() {
         // Two refreshes paging at once would append duplicate pages, so the new
@@ -425,41 +437,63 @@ class CloudFilesViewModel(
 
             var uploaded = 0
             var failed = 0
+            var finished = 0
+            // Workers run on the shared multi-threaded dispatcher, so the
+            // counters and the one ongoing notification are guarded.
+            val stats = Mutex()
 
-            requests.forEachIndexed { index, request ->
-                val transferId = "transfer-${++transferCounter}"
-                val name = request.localPath.fileName()
-                // One ongoing notification for the whole batch, updated instead
-                // of stacking a second progress bar per file.
-                notifier.progress("Mengunggah berkas", "${index + 1}/${requests.size} · $name")
-                state.update { current ->
-                    current.copy(
-                        transfers = (listOf(
-                            TransferItem(
-                                id = transferId,
-                                fileName = name,
-                                direction = TransferDirection.Upload,
-                                progress = 0f,
-                            ),
-                        ) + current.transfers).trimTransfers(),
-                    )
+            // A batch no longer crawls one file at a time: a handful of parallel
+            // transfers keeps TDLib busy without flooding a mobile connection.
+            coroutineScope {
+                val queue = Channel<UploadRequest>(capacity = requests.size)
+                requests.forEach { queue.send(it) }
+                queue.close()
+
+                repeat(minOf(MAX_PARALLEL_TRANSFERS, requests.size)) {
+                    launch {
+                        for (request in queue) {
+                            val transferId = "transfer-${nextTransferId()}"
+                            val name = request.localPath.fileName()
+                            addTransfer(
+                                TransferItem(
+                                    id = transferId,
+                                    fileName = name,
+                                    direction = TransferDirection.Upload,
+                                    progress = 0f,
+                                ),
+                            )
+
+                            val result = uploadFile(
+                                transferId = transferId,
+                                chatId = chatId,
+                                localPath = request.localPath,
+                                folder = request.folder,
+                            )
+                            val message = stats.withLock {
+                                finished++
+                                if (result.isSuccess) uploaded++ else failed++
+                                "$finished/${requests.size} selesai · $uploaded berhasil" +
+                                    (if (failed > 0) ", $failed gagal" else "")
+                            }
+                            // One ongoing notification for the whole batch, updated
+                            // instead of stacking a progress bar per file.
+                            notifier.progress("Mengunggah berkas", message)
+                            result.fold(
+                                onSuccess = {
+                                    if (single) {
+                                        logDiagnostic(LOG_TAG, "unggah selesai: $name")
+                                    }
+                                },
+                                onFailure = { failure ->
+                                    logDiagnostic(
+                                        LOG_TAG,
+                                        "unggah gagal: $name: ${failure.message}",
+                                    )
+                                },
+                            )
+                        }
+                    }
                 }
-
-                uploadFile(transferId, chatId, request.localPath, request.folder).fold(
-                    onSuccess = {
-                        uploaded++
-                        if (single) logDiagnostic(LOG_TAG, "unggah selesai: $name")
-                    },
-                    onFailure = { failure ->
-                        failed++
-                        logDiagnostic(LOG_TAG, "unggah gagal: $name: ${failure.message}")
-                    },
-                )
-                notifier.progress(
-                    "Mengunggah berkas",
-                    "${index + 1}/${requests.size} selesai · $uploaded berhasil" +
-                        (if (failed > 0) ", $failed gagal" else ""),
-                )
             }
 
             notifier.clearProgress()
@@ -571,7 +605,7 @@ class CloudFilesViewModel(
         }
         logDiagnostic(LOG_TAG, "unduh mulai: ${file.name} (file ${file.fileId})")
 
-        val id = "transfer-${++transferCounter}"
+        val id = "transfer-${nextTransferId()}"
         state.update {
             it.copy(
                 transfers = (listOf(
@@ -819,9 +853,9 @@ class CloudFilesViewModel(
     }
 
     /**
-     * Downloads a selection one file at a time. Keeping it sequential avoids
-     * flooding the connection with parallel requests on a big selection while
-     * still giving every file its own row in the Transfer tab.
+     * Downloads a selection with a few files in flight at once. Every file still
+     * gets its own row in the Transfer tab; the counters are guarded because the
+     * workers share a multi-threaded dispatcher.
      */
     fun downloadMany(files: List<CloudFile>) {
         if (files.isEmpty()) return
@@ -830,47 +864,62 @@ class CloudFilesViewModel(
         scope.launch {
             var saved = 0
             var failed = 0
+            val stats = Mutex()
 
-            files.forEachIndexed { index, file ->
-                notifier.progress("Mengunduh berkas", "${index + 1}/${files.size} · ${file.name}")
-                val id = "transfer-${++transferCounter}"
-                addTransfer(
-                    TransferItem(
-                        id = id,
-                        fileName = file.name,
-                        direction = TransferDirection.Download,
-                        progress = 0f,
-                        fileId = file.fileId,
-                        file = file,
-                    ),
-                )
+            coroutineScope {
+                val queue = Channel<CloudFile>(capacity = files.size)
+                files.forEach { queue.send(it) }
+                queue.close()
 
-                runCatching {
-                    repository.download(file.fileId) { progress ->
-                        updateTransfer(id) { it.copy(progress = progress) }
+                repeat(minOf(MAX_PARALLEL_TRANSFERS, files.size)) {
+                    launch {
+                        for (file in queue) {
+                            val id = "transfer-${nextTransferId()}"
+                            addTransfer(
+                                TransferItem(
+                                    id = id,
+                                    fileName = file.name,
+                                    direction = TransferDirection.Download,
+                                    progress = 0f,
+                                    fileId = file.fileId,
+                                    file = file,
+                                ),
+                            )
+
+                            runCatching {
+                                repository.download(file.fileId) { progress ->
+                                    updateTransfer(id) { it.copy(progress = progress) }
+                                }
+                            }.fold(
+                                onSuccess = { path ->
+                                    updateTransfer(id) {
+                                        it.copy(
+                                            status = TransferStatus.Completed,
+                                            progress = 1f,
+                                            detail = path,
+                                        )
+                                    }
+                                    saveDownloadedFile(file, path)
+                                    stats.withLock { saved++ }
+                                },
+                                onFailure = { failure ->
+                                    updateTransfer(id) {
+                                        it.copy(
+                                            status = TransferStatus.Failed,
+                                            detail = failure.message ?: "Unduhan gagal",
+                                        )
+                                    }
+                                    stats.withLock { failed++ }
+                                },
+                            )
+                            val message = stats.withLock {
+                                "${saved + failed}/${files.size} selesai · $saved berhasil" +
+                                    (if (failed > 0) ", $failed gagal" else "")
+                            }
+                            notifier.progress("Mengunduh berkas", message)
+                        }
                     }
-                }.fold(
-                    onSuccess = { path ->
-                        updateTransfer(id) {
-                            it.copy(
-                                status = TransferStatus.Completed,
-                                progress = 1f,
-                                detail = path,
-                            )
-                        }
-                        saveDownloadedFile(file, path)
-                        saved++
-                    },
-                    onFailure = { failure ->
-                        updateTransfer(id) {
-                            it.copy(
-                                status = TransferStatus.Failed,
-                                detail = failure.message ?: "Unduhan gagal",
-                            )
-                        }
-                        failed++
-                    },
-                )
+                }
             }
 
             notifier.clearProgress()
@@ -1088,51 +1137,73 @@ class CloudFilesViewModel(
                     val syncedKeys = mutableListOf<String>()
                     val failedKeys = mutableListOf<String>()
 
-                    for (file in batch) {
-                        attempted += file.key
-                        notifier.progress(
-                            "Sinkron folder",
-                            "${folder.name} · ${file.name}",
-                        )
-                        val transferId = "transfer-${++transferCounter}"
-                        state.update { current ->
-                            current.copy(
-                                transfers = (listOf(
-                                    TransferItem(
-                                        id = transferId,
-                                        fileName = file.name,
-                                        direction = TransferDirection.Upload,
-                                        progress = 0f,
-                                    ),
-                                ) + current.transfers).trimTransfers(),
-                            )
+                    // The batch uploads in parallel too: a synced folder of
+                    // hundreds of files used to move one file at a time.
+                    val keyLock = Mutex()
+                    coroutineScope {
+                        val queue = Channel<GalleryFile>(capacity = batch.size)
+                        batch.forEach { file ->
+                            attempted += file.key
+                            queue.trySend(file)
                         }
+                        queue.close()
 
-                        // Recreate the tree: a file from Liburan/Pantai lands in
-                        // Galeri/Liburan/Pantai instead of being flattened.
-                        val target = if (file.relativeDirectory.isBlank()) {
-                            GALLERY_FOLDER
-                        } else {
-                            "$GALLERY_FOLDER/${file.relativeDirectory}"
+                        repeat(minOf(MAX_PARALLEL_TRANSFERS, batch.size)) {
+                            launch {
+                                for (file in queue) {
+                                    val transferId = "transfer-${nextTransferId()}"
+                                    addTransfer(
+                                        TransferItem(
+                                            id = transferId,
+                                            fileName = file.name,
+                                            direction = TransferDirection.Upload,
+                                            progress = 0f,
+                                        ),
+                                    )
+
+                                    // Recreate the tree: a file from
+                                    // Liburan/Pantai lands in Galeri/Liburan/Pantai
+                                    // instead of being flattened.
+                                    val target = if (file.relativeDirectory.isBlank()) {
+                                        GALLERY_FOLDER
+                                    } else {
+                                        "$GALLERY_FOLDER/${file.relativeDirectory}"
+                                    }
+                                    val result = uploadFile(
+                                        transferId = transferId,
+                                        chatId = chatId,
+                                        localPath = file.localPath,
+                                        folder = target,
+                                    )
+                                    gallerySource.release(listOf(file))
+
+                                    result.fold(
+                                        onSuccess = {
+                                            keyLock.withLock {
+                                                folderUploaded++
+                                                syncedKeys += file.key
+                                            }
+                                            logDiagnostic(LOG_TAG, "sinkron folder: ${file.name}")
+                                        },
+                                        onFailure = { failure ->
+                                            keyLock.withLock {
+                                                folderFailed++
+                                                failedKeys += file.key
+                                            }
+                                            logDiagnostic(
+                                                LOG_TAG,
+                                                "sinkron folder gagal: ${file.name}: " +
+                                                    failure.message,
+                                            )
+                                        },
+                                    )
+                                    notifier.progress(
+                                        "Sinkron folder",
+                                        "${folder.name} · ${file.name} selesai",
+                                    )
+                                }
+                            }
                         }
-                        val result = uploadFile(transferId, chatId, file.localPath, target)
-                        gallerySource.release(listOf(file))
-
-                        result.fold(
-                            onSuccess = {
-                                folderUploaded++
-                                syncedKeys += file.key
-                                logDiagnostic(LOG_TAG, "sinkron folder: ${file.name}")
-                            },
-                            onFailure = { failure ->
-                                folderFailed++
-                                failedKeys += file.key
-                                logDiagnostic(
-                                    LOG_TAG,
-                                    "sinkron folder gagal: ${file.name}: ${failure.message}",
-                                )
-                            },
-                        )
                     }
 
                     // One settings write per batch instead of one per photo: the
@@ -1319,6 +1390,10 @@ class CloudFilesViewModel(
         const val MAX_GALLERY_ATTEMPTS = 3
         const val MAX_COVER_CACHE_ENTRIES = 500
         const val MAX_PREVIEW_CACHE_ENTRIES = 12
+
+        /** Files transferred at once: enough to keep TDLib busy, not enough to
+         *  saturate a mobile connection or the user's patience. */
+        const val MAX_PARALLEL_TRANSFERS = 3
     }
 }
 
