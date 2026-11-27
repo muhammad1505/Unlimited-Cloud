@@ -21,6 +21,15 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.4.2 — 27 November 2026
+
+### Baru
+
+- Pengaturan → Penyimpanan kini punya tombol "Rapikan berkas lama" untuk memindahkan sisa berkas tanpa topik ke topik jenisnya kapan pun kamu mau. Bila daftar berkas belum termuat penuh, aplikasi memuat seluruh riwayat lebih dulu supaya tidak ada yang terlewat.
+
+### Perbaikan
+
+- Berkas lama yang gagal dirapikan tidak lagi dibiarkan di General: id-nya dicatat, lalu dicoba ulang otomatis pada peluncuran berikutnya atau lewat tombol rapikan di atas.
 ## 1.4.1 — 27 November 2026
 
 ### Baru

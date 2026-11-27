@@ -314,8 +314,9 @@ class CloudFileRepository(private val session: TdJsonSession) {
      * Telegram cannot move a message between topics, so the file is forwarded
      * into the target topic first and the copy receives the folder caption; only
      * then is the original deleted. A forward that fails therefore never loses
-     * the file. Returns true when the original was deleted, i.e. the file now
-     * lives only inside its type topic.
+     * the file. Returns true once the file lives in [folder]; a deletion that
+     * fails is not reported as a failure, because retrying would copy the file a
+     * second time.
      */
     suspend fun moveToTypeTopic(chatId: Long, messageId: Long, folder: String): Boolean {
         val topicId = topics.resolve(chatId, folder) ?: return false
@@ -369,7 +370,11 @@ class CloudFileRepository(private val session: TdJsonSession) {
             logDiagnostic(LOG_TAG, "caption '$folder' gagal ditulis pada pesan $copyId")
         }
 
-        return runCatching { deleteMessages(chatId, listOf(messageId)) }.isSuccess
+        val deleted = runCatching { deleteMessages(chatId, listOf(messageId)) }.isSuccess
+        if (!deleted) {
+            logDiagnostic(LOG_TAG, "pesan asli $messageId gagal dihapus setelah disalin ke '$folder'")
+        }
+        return true
     }
 
     /**

@@ -112,13 +112,30 @@ class AppPreferences(
     fun setAutoTopics(enabled: Boolean) = put(KEY_AUTO_TOPICS, enabled.toString())
 
     /**
-     * One-time flag for moving caption-less messages into their type topic. It
-     * is set before the first move, so a file that cannot be forwarded is never
-     * copied again (and again) on every launch.
+     * Whether the full sweep over caption-less messages already ran. It is set
+     * before the first move, so every launch does not rescan the whole history;
+     * the files that failed are kept in [tidyPending] instead of being retried
+     * all over again.
      */
     fun looseFilesTidied(): Boolean = get(KEY_LOOSE_FILES_TIDIED) == "true"
 
     fun setLooseFilesTidied(done: Boolean) = put(KEY_LOOSE_FILES_TIDIED, done.toString())
+
+    /**
+     * Message ids whose move into a type topic has not succeeded yet. They are
+     * retried on the next pass, which used to be impossible: one failure left the
+     * file in General for good.
+     */
+    fun tidyPending(): Set<Long> = get(KEY_TIDY_PENDING)
+        ?.split(',')
+        ?.mapNotNull { it.trim().toLongOrNull() }
+        ?.toSet()
+        .orEmpty()
+
+    fun setTidyPending(ids: Set<Long>) = put(
+        KEY_TIDY_PENDING,
+        if (ids.isEmpty()) null else ids.sorted().joinToString(","),
+    )
 
     /**
      * Drops the keys that belong to the Telegram account. The picked gallery
@@ -133,6 +150,7 @@ class AppPreferences(
             put(KEY_CLOUD_DESCRIPTION_VERSION, null)
             put(KEY_AUTO_TOPICS, null)
             put(KEY_LOOSE_FILES_TIDIED, null)
+            put(KEY_TIDY_PENDING, null)
             put(KEY_GALLERY_SYNCED_KEYS, null)
             put(KEY_GALLERY_FAILED_KEYS, null)
             put(KEY_GALLERY_LAST_SYNC, null)
@@ -412,6 +430,7 @@ class AppPreferences(
         const val KEY_CLOUD_DESCRIPTION_VERSION = "cloud.descriptionVersion"
         const val KEY_AUTO_TOPICS = "cloud.autoTopics"
         const val KEY_LOOSE_FILES_TIDIED = "cloud.looseFilesTidied"
+        const val KEY_TIDY_PENDING = "cloud.tidyPending"
         const val KEY_LAST_SEEN_VERSION = "changelog.lastSeenVersionCode"
         const val KEY_GALLERY_AUTO_SYNC = "gallery.autoSync"
         const val KEY_GALLERY_BACKGROUND_SYNC = "gallery.backgroundSync"

@@ -92,6 +92,8 @@ data class ExplorerUiState(
     val parallelTransfers: Int = 3,
     /** Whether uploads without a folder are filed into a topic by file type. */
     val autoTopics: Boolean = true,
+    /** True while an old-file tidy pass runs; Settings disables its button. */
+    val tidying: Boolean = false,
     /** Custom name of the storage group; null while it keeps the default one. */
     val storageTitle: String? = null,
     /** Whether the storage group is muted in Telegram. */
@@ -145,6 +147,10 @@ data class ExplorerUiState(
         get() = transfers.filter { it.status != TransferStatus.Running }
 
     fun folderCount(folder: String): Int = files.count { it.inFolder(folder) }
+
+    /** Old messages still waiting for their type topic, i.e. the tidy button's count. */
+    val looseFileCount: Int
+        get() = files.count { !it.folderFromCaption }
 }
 
 /** True for a file stored directly in [folder] or in one of its subfolders. */
@@ -361,43 +367,136 @@ class CloudFilesViewModel(
 
     /**
      * Moves messages left over from versions that did not file by type into
-     * their type topic, once per account. The flag is written before the first
-     * move, so a file that cannot be forwarded is never copied again on every
-     * launch.
+     * their type topic. The first pass scans the whole history; later launches
+     * only retry the ids that failed before, so a file TDLib refuses is not copied
+     * again (and again) on every start.
      */
     private fun maybeTidyLooseFiles(chatId: Long) {
-        if (!state.value.autoTopics || preferences.looseFilesTidied()) return
+        if (!state.value.autoTopics) return
         if (tidyJob?.isActive == true) return
-        val loose = state.value.files.filter { !it.folderFromCaption }
+        val firstPass = !preferences.looseFilesTidied()
+        if (!firstPass && preferences.tidyPending().isEmpty()) return
+        // Safe to mark before the move: whatever does not make it is kept in
+        // cloud.tidyPending and retried by a later pass.
         preferences.setLooseFilesTidied(true)
-        if (loose.isEmpty()) return
+        launchTidy(chatId, tidyEverything = firstPass, manual = false)
+    }
 
+    /**
+     * The "Rapikan berkas lama" button. It runs even with automatic filing
+     * switched off, because moving old files by hand is exactly what the switch
+     * cannot do for the user.
+     */
+    fun tidyNow() {
+        if (tidyJob?.isActive == true) return
         tidyJob = scope.launch {
-            logDiagnostic(LOG_TAG, "rapikan: ${loose.size} berkas tanpa topik")
-            state.update { it.copy(status = "Merapikan ${loose.size} berkas lama…") }
-            var moved = 0
-            var failed = 0
-            loose.forEach { file ->
-                val folder = FileCategories.folderFor(file.name)
-                val ok = runCatching {
-                    repository.moveToTypeTopic(chatId, file.messageId, folder)
-                }.getOrDefault(false)
-                if (ok) moved++ else failed++
+            val chatId = ensureChannelWithRetry()
+            if (chatId == null) {
+                reportError("Penyimpanan belum siap")
+                return@launch
             }
-            logDiagnostic(LOG_TAG, "rapikan selesai: $moved dipindah, $failed gagal")
+            // Every page has to be in memory, otherwise files on pages that were
+            // never scrolled to would be left behind and the count would be wrong.
+            if (!isHistoryComplete(state.value)) {
+                state.update {
+                    it.copy(tidying = true, status = "Memuat seluruh daftar berkas…", error = null)
+                }
+                val failure = runCatching { completeHistory(chatId) }.exceptionOrNull()
+                if (failure != null) {
+                    state.update {
+                        it.copy(
+                            tidying = false,
+                            status = null,
+                            error = failure.message ?: "Gagal memuat daftar berkas",
+                        )
+                    }
+                    return@launch
+                }
+            }
+            runTidy(chatId, tidyEverything = true, manual = true)
+        }
+    }
+
+    /** Loads the remaining history pages so a manual tidy sees every file. */
+    private suspend fun completeHistory(chatId: Long) {
+        // The button can be pressed before the explorer ever loaded a page.
+        if (state.value.files.isEmpty() && state.value.nextFromMessageId == null) {
+            val first = loadPage(chatId)
+            applyPage(first, replace = true, moreToLoad = first.nextFromMessageId != null)
+        }
+        var pages = 0
+        var cursor = state.value.nextFromMessageId
+        while (cursor != null && pages < MAX_COMPLETE_PAGES) {
+            val page = loadPage(chatId, cursor)
+            pages++
+            applyPage(page, replace = false, moreToLoad = page.nextFromMessageId != null)
+            val next = page.nextFromMessageId
+            // A cursor that does not advance would page the same slice forever.
+            cursor = if (next == cursor) null else next
+        }
+    }
+
+    private fun launchTidy(chatId: Long, tidyEverything: Boolean, manual: Boolean) {
+        if (tidyJob?.isActive == true) return
+        tidyJob = scope.launch { runTidy(chatId, tidyEverything, manual) }
+    }
+
+    /**
+     * Forwards every target into its type topic and deletes the old message only
+     * after the copy exists. Ids that fail are stored before the pass returns, so
+     * the next launch (or the button) picks them up again.
+     */
+    private suspend fun runTidy(chatId: Long, tidyEverything: Boolean, manual: Boolean) {
+        val pending = preferences.tidyPending()
+        val targets = tidyTargets(state.value.files, pending, tidyEverything)
+        if (targets.isEmpty()) {
+            // Remembered ids that vanished or already carry a caption need no retry.
+            if (pending.isNotEmpty()) preferences.setTidyPending(emptySet())
             state.update {
                 it.copy(
-                    status = if (moved > 0) {
-                        "$moved berkas lama dipindah ke topik jenisnya"
-                    } else {
-                        null
-                    },
-                    error = if (failed > 0) "$failed berkas lama gagal dirapikan" else null,
+                    tidying = false,
+                    status = if (manual) "Tidak ada berkas lama yang perlu dirapikan" else it.status,
                 )
             }
-            // The ids changed (forward + delete), so the list is read again.
-            if (moved > 0) refresh()
+            return
         }
+
+        // The whole batch is remembered first: a launch killed in the middle still
+        // retries the rest instead of leaving those files untracked.
+        preferences.setTidyPending(targets.mapTo(mutableSetOf<Long>()) { it.messageId })
+        logDiagnostic(LOG_TAG, "rapikan: ${targets.size} berkas tanpa topik")
+        state.update {
+            it.copy(tidying = true, status = "Merapikan ${targets.size} berkas lama…", error = null)
+        }
+
+        var moved = 0
+        val failed = mutableSetOf<Long>()
+        targets.forEach { file ->
+            val folder = FileCategories.folderFor(file.name)
+            val ok = runCatching {
+                repository.moveToTypeTopic(chatId, file.messageId, folder)
+            }.getOrDefault(false)
+            if (ok) moved++ else failed += file.messageId
+        }
+        preferences.setTidyPending(failed)
+        logDiagnostic(LOG_TAG, "rapikan selesai: $moved dipindah, ${failed.size} gagal")
+        state.update {
+            it.copy(
+                tidying = false,
+                status = when {
+                    moved > 0 -> "$moved berkas lama dipindah ke topik jenisnya"
+                    manual -> "Tidak ada berkas lama yang bisa dirapikan"
+                    else -> null
+                },
+                error = if (failed.isNotEmpty()) {
+                    "${failed.size} berkas gagal dirapikan, dicoba lagi nanti"
+                } else {
+                    null
+                },
+            )
+        }
+        // The ids changed (forward + delete), so the list is read again.
+        if (moved > 0) refresh()
     }
 
     /** Saves the parallel transfer count; running batches keep their worker count. */
@@ -1671,6 +1770,7 @@ class CloudFilesViewModel(
         const val PAGE_RETRY_MILLIS = 1_000L
         const val GALLERY_FOLDER = "Galeri"
         const val MAX_GALLERY_ATTEMPTS = 3
+        const val MAX_COMPLETE_PAGES = 500
         const val MAX_COVER_CACHE_ENTRIES = 500
         const val MAX_PREVIEW_CACHE_ENTRIES = 12
     }

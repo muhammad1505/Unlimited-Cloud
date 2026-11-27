@@ -150,6 +150,7 @@ fun SettingsScreen(
             onMutedChange = viewModel::setStorageMuted,
             onArchivedChange = viewModel::setStorageArchived,
             onAutoTopicsChange = viewModel::setAutoTopics,
+            onTidyLooseFiles = viewModel::tidyNow,
             onOpenTelegram = {
                 val chatId = (channelState as? CloudChannelState.Ready)?.chatId
                 if (chatId == null || !openTelegramChat(chatId)) {
@@ -400,6 +401,7 @@ private fun StorageCard(
     onMutedChange: (Boolean) -> Unit,
     onArchivedChange: (Boolean) -> Unit,
     onAutoTopicsChange: (Boolean) -> Unit,
+    onTidyLooseFiles: () -> Unit,
     onOpenTelegram: () -> Unit,
     onRefresh: () -> Unit,
 ) {
@@ -522,6 +524,29 @@ private fun StorageCard(
             onCheckedChange = onAutoTopicsChange,
             enabled = !customizing,
         )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(
+                onClick = onTidyLooseFiles,
+                enabled = !state.tidying && !state.loading,
+            ) {
+                Icon(
+                    imageVector = AppIcons.Sparkles,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    when {
+                        state.tidying -> "Merapikan…"
+                        state.looseFileCount > 0 -> "Rapikan ${state.looseFileCount} berkas lama"
+                        else -> "Rapikan berkas lama"
+                    },
+                )
+            }
+        }
         Spacer(Modifier.height(2.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
