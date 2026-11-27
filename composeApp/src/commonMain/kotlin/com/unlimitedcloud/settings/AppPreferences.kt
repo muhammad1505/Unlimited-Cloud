@@ -122,6 +122,15 @@ class AppPreferences(
     fun setLooseFilesTidied(done: Boolean) = put(KEY_LOOSE_FILES_TIDIED, done.toString())
 
     /**
+     * Whether the one-time pass that moved gallery uploads into their type topic
+     * already ran. Kept apart from [looseFilesTidied] because the gallery re-file
+     * is a newer rule and must run once even on devices that already tidied.
+     */
+    fun galleryFilesRetyped(): Boolean = get(KEY_GALLERY_RETYPED) == "true"
+
+    fun setGalleryFilesRetyped(done: Boolean) = put(KEY_GALLERY_RETYPED, done.toString())
+
+    /**
      * Message ids whose move into a type topic has not succeeded yet. They are
      * retried on the next pass, which used to be impossible: one failure left the
      * file in General for good.
@@ -150,6 +159,7 @@ class AppPreferences(
             put(KEY_CLOUD_DESCRIPTION_VERSION, null)
             put(KEY_AUTO_TOPICS, null)
             put(KEY_LOOSE_FILES_TIDIED, null)
+            put(KEY_GALLERY_RETYPED, null)
             put(KEY_TIDY_PENDING, null)
             put(KEY_GALLERY_SYNCED_KEYS, null)
             put(KEY_GALLERY_FAILED_KEYS, null)
@@ -453,6 +463,7 @@ class AppPreferences(
         const val KEY_CLOUD_DESCRIPTION_VERSION = "cloud.descriptionVersion"
         const val KEY_AUTO_TOPICS = "cloud.autoTopics"
         const val KEY_LOOSE_FILES_TIDIED = "cloud.looseFilesTidied"
+        const val KEY_GALLERY_RETYPED = "cloud.galleryRetyped"
         const val KEY_TIDY_PENDING = "cloud.tidyPending"
         const val KEY_LAST_SEEN_VERSION = "changelog.lastSeenVersionCode"
         const val KEY_GALLERY_AUTO_SYNC = "gallery.autoSync"

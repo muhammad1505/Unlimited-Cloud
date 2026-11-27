@@ -146,6 +146,15 @@ tiga direktori cache unggahan (`uploads`, `gallery-sync`, `group-photo`) dan
 tidak menyentuh direktori TDLib, jadi membersihkan cache tidak pernah merusak
 sesi Telegram.
 
+`tidyTargets` tidak lagi hanya memindahkan pesan tanpa caption: pesan yang masih
+bercaption "Galeri" (folder sync versi lama) ikut dipindahkan ke topik jenisnya
+saat automatic topics aktif, dengan subfolder dipertahankan. Putaran dibatasi
+`MAX_TIDY_PER_PASS` dan sisanya disimpan di `cloud.tidyPending`.
+
+Notifikasi progres memakai satu notifikasi yang sama dengan `TransferService`,
+tetapi kini membawa fraksi batch (`TransferNotifier.progress(..., fraction)`) dan
+jumlah berkas, jadi bilah progres bergerak dari 0 ke 100% alih-alih spinner.
+
 Karena unggahan memakai `inputFileLocal`, TDLib tetap mencatat jalur salinan
 sementara yang kemudian dihapus aplikasi (opsi hapus salinan, atau `release()`
 sinkron galeri). `cachedFilePath` dan `download` di repository memeriksa apakah

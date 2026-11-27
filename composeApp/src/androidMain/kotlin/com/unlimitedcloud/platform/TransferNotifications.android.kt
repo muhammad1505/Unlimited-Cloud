@@ -53,6 +53,7 @@ internal fun transferProgressNotification(
     context: Context,
     title: String,
     message: String,
+    fraction: Float? = null,
 ): Notification {
     ensureTransferChannel(context)
     return NotificationCompat.Builder(context, TRANSFER_CHANNEL_ID)
@@ -60,9 +61,13 @@ internal fun transferProgressNotification(
         .setContentTitle(title)
         .setContentText(message)
         .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-        // Indeterminate on purpose: TDLib reports one fraction per file, and a
-        // bar jumping backwards between files is worse than a spinner.
-        .setProgress(0, 0, true)
+        // A determinate bar shows how much of the whole batch is done; without a
+        // fraction the batch length is unknown, so the bar keeps spinning.
+        .setProgress(
+            100,
+            fraction?.let { (it.coerceIn(0f, 1f) * 100).toInt() } ?: 0,
+            fraction == null,
+        )
         .setOngoing(true)
         .setSilent(true)
         .setOnlyAlertOnce(true)
@@ -115,9 +120,9 @@ private class AndroidTransferNotifier(private val context: Context) : TransferNo
         runCatching { NotificationManagerCompat.from(context).notify(nextId(), notification) }
     }
 
-    override fun progress(title: String, message: String) {
+    override fun progress(title: String, message: String, fraction: Float?) {
         if (!canPost()) return
-        val notification = transferProgressNotification(context, title, message)
+        val notification = transferProgressNotification(context, title, message, fraction)
         runCatching {
             NotificationManagerCompat.from(context).notify(TRANSFER_PROGRESS_ID, notification)
         }

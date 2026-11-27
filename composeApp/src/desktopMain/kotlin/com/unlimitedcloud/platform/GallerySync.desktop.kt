@@ -59,6 +59,19 @@ private object DesktopGallerySyncSource : GallerySyncSource {
         GalleryBatch(files = files)
     }
 
+    override suspend fun countPending(
+        folder: GalleryFolder,
+        alreadySynced: Set<String>,
+    ): Int = withContext(Dispatchers.IO) {
+        val root = runCatching { File(folder.id) }.getOrNull()
+            ?: return@withContext 0
+        if (!root.isDirectory) return@withContext 0
+        root.walkTopDown()
+            .maxDepth(MAX_DEPTH)
+            .take(MAX_SCAN)
+            .count { file -> file.isFile && file.canRead() && file.absolutePath !in alreadySynced }
+    }
+
     /** Nothing was copied, so there is no temporary file to remove. */
     override fun release(files: List<GalleryFile>) = Unit
 

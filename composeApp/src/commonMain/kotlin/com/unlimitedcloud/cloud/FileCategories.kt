@@ -8,6 +8,8 @@ package com.unlimitedcloud.cloud
  * choose anything: a photo lands in "Foto", a PDF in "Dokumen", and so on.
  */
 object FileCategories {
+    /** Topic the folder sync used for every file before per-type filing. */
+    const val GALLERY = "Galeri"
     const val PHOTOS = "Foto"
     const val VIDEOS = "Video"
     const val AUDIO = "Audio"

@@ -22,8 +22,11 @@ interface TransferNotifier {
     /** One notification per finished or failed batch. */
     fun notify(title: String, message: String)
 
-    /** Reuses a single ongoing notification for the batch that is running. */
-    fun progress(title: String, message: String)
+    /**
+     * Reuses a single ongoing notification for the batch that is running.
+     * [fraction] is the overall batch progress; null keeps the bar indeterminate.
+     */
+    fun progress(title: String, message: String, fraction: Float? = null)
 
     /** Removes the ongoing notification once a batch stops. */
     fun clearProgress()

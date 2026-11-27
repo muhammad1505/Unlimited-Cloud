@@ -19,7 +19,7 @@ private object DesktopTransferNotifier : TransferNotifier {
 
     override fun notify(title: String, message: String) = DesktopTray.notify(title, message)
 
-    override fun progress(title: String, message: String) =
+    override fun progress(title: String, message: String, fraction: Float?) =
         DesktopTray.showProgress(title, message)
 
     override fun clearProgress() = DesktopTray.clearProgress()

@@ -97,6 +97,11 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     var showResetGallery by remember { mutableStateOf(false) }
+    // Access to a gallery folder is granted by the user in the system picker;
+    // the dialog explains that before the picker opens, so the request is
+    // explicit and limited to the chosen folder instead of a blanket storage
+    // permission.
+    var showFolderAccessInfo by remember { mutableStateOf(false) }
     var showRenameStorage by remember { mutableStateOf(false) }
     var batteryFeedback by remember { mutableStateOf<String?>(null) }
     var confirmDeleteOriginals by remember { mutableStateOf(false) }
@@ -176,7 +181,7 @@ fun SettingsScreen(
 
         GalleryCard(
             state = filesState,
-            onAddFolder = pickGalleryFolder,
+            onAddFolder = { showFolderAccessInfo = true },
             onRemoveFolder = viewModel::removeGalleryFolder,
             onGalleryAutoSyncChange = viewModel::setGalleryAutoSync,
             onBackgroundSyncChange = viewModel::setGalleryBackgroundSync,
@@ -184,6 +189,37 @@ fun SettingsScreen(
             onSyncNow = { viewModel.syncGallery() },
             onResetSync = { showResetGallery = true },
         )
+
+        if (showFolderAccessInfo) {
+            AlertDialog(
+                onDismissRequest = { showFolderAccessInfo = false },
+                title = { Text("Akses folder penyimpanan") },
+                text = {
+                    Text(
+                        "Unlimited Cloud tidak meminta izin penyimpanan penuh. " +
+                            "Setelah Anda menekan Lanjutkan, Android menampilkan pemilih " +
+                            "folder: aplikasi hanya bisa membaca folder yang Anda pilih " +
+                            "beserta subfoldernya, dan izinnya bisa Anda cabut kapan saja " +
+                            "lewat Pengaturan.",
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showFolderAccessInfo = false
+                            pickGalleryFolder()
+                        },
+                    ) {
+                        Text("Lanjutkan")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showFolderAccessInfo = false }) {
+                        Text("Batal")
+                    }
+                },
+            )
+        }
 
         if (battery.supported) {
             BatteryCard(
@@ -864,6 +900,22 @@ private fun GalleryCard(
         }
 
         Spacer(Modifier.height(2.dp))
+        if (state.gallerySyncing) {
+            // A sync can run for minutes; without a total and a rough estimate
+            // the only feedback was a spinner and the user could not tell whether
+            // anything was moving.
+            InfoRow(
+                icon = AppIcons.Upload,
+                title = "Progres sinkron",
+                value = "${state.galleryDone}/${state.galleryPlanned} berkas" +
+                    when (val eta = state.galleryEtaSeconds) {
+                        null -> " · memperkirakan sisa waktu…"
+                        0L -> " · segera selesai"
+                        else -> " · sisa ±${(eta + 59) / 60} menit"
+                    },
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
         InfoRow(
             icon = AppIcons.History,
             title = "Sinkron terakhir",

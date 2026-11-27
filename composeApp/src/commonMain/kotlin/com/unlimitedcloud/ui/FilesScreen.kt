@@ -98,7 +98,20 @@ fun FilesScreen(
     // The Berkas tab opens on the folder tiles; a folder or a search opens the
     // file list. Kept in saveable state so rotation does not jump back out.
     var browsingFolders by rememberSaveable { mutableStateOf(true) }
+    // Hoisted out of FolderBrowser: the tree leaves the composition while a
+    // folder is open, and its expanded branches used to collapse on every back
+    // press, which dropped the user at the root again.
+    var expandedFolderPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
     val showingFolders = browsingFolders && state.query.isBlank()
+    // Back walks one level up the folder path before it returns to the tree.
+    val goBackOneLevel: () -> Unit = {
+        val current = state.selectedFolder
+        if (current != null && current.contains('/')) {
+            viewModel.selectFolder(current.substringBeforeLast('/'))
+        } else {
+            browsingFolders = true
+        }
+    }
 
     // Multi-select lives in the screen: the selection is a UI concern and must
     // not survive a refresh that replaces the file list.
@@ -180,7 +193,7 @@ fun FilesScreen(
         when {
             selecting -> exitSelection()
             state.query.isNotBlank() -> viewModel.setQuery("")
-            else -> browsingFolders = true
+            else -> goBackOneLevel()
         }
     }
 
@@ -303,7 +316,7 @@ fun FilesScreen(
                 ) {
                     IconButton(
                         onClick = {
-                            if (state.query.isNotBlank()) viewModel.setQuery("") else browsingFolders = true
+                            if (state.query.isNotBlank()) viewModel.setQuery("") else goBackOneLevel()
                         },
                     ) {
                         Icon(
@@ -372,6 +385,14 @@ fun FilesScreen(
 
                 showingFolders -> FolderBrowser(
                     state = state,
+                    expandedPaths = expandedFolderPaths,
+                    onToggleExpanded = { path ->
+                        expandedFolderPaths = if (path in expandedFolderPaths) {
+                            expandedFolderPaths - path
+                        } else {
+                            expandedFolderPaths + path
+                        }
+                    },
                     onOpenFolder = { folder ->
                         browsingFolders = false
                         viewModel.selectFolder(folder)
@@ -623,6 +644,8 @@ private fun FolderChip(
 @Composable
 private fun FolderBrowser(
     state: ExplorerUiState,
+    expandedPaths: Set<String>,
+    onToggleExpanded: (String) -> Unit,
     onOpenFolder: (String?) -> Unit,
 ) {
     // A folder only exists as the caption of its messages, so the tree is built
@@ -631,7 +654,6 @@ private fun FolderBrowser(
     // that somehow arrive without a readable file name.
     val tree = remember(state.files) { buildFolderTree(state.files) }
     val looseFiles = remember(state.files) { state.files.filter { it.folder == null } }
-    var expandedPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
     val rows = remember(tree, expandedPaths) { flattenFolders(tree, expandedPaths) }
 
     if (tree.isEmpty() && looseFiles.isEmpty()) {
@@ -674,13 +696,7 @@ private fun FolderBrowser(
                 depth = row.depth,
                 expandable = row.node.children.isNotEmpty(),
                 expanded = row.node.path in expandedPaths,
-                onToggle = {
-                    expandedPaths = if (row.node.path in expandedPaths) {
-                        expandedPaths - row.node.path
-                    } else {
-                        expandedPaths + row.node.path
-                    }
-                },
+                onToggle = { onToggleExpanded(row.node.path) },
                 onOpen = { onOpenFolder(row.node.path) },
             )
         }

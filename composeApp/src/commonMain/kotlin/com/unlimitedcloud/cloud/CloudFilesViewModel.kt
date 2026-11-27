@@ -42,6 +42,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okio.FileSystem
 import okio.Path.Companion.toPath
+import kotlin.time.TimeSource
 
 enum class FileSort(val label: String) {
     Newest("Terbaru"),
@@ -71,6 +72,14 @@ data class TransferItem(
     val detail: String? = null,
     /** Kept for downloads so a failed transfer can be retried from the list. */
     val file: CloudFile? = null,
+    /** Kept for uploads so a failed transfer can be retried from the list. */
+    val localPath: String? = null,
+    /** Target folder of an upload, replayed by a retry. */
+    val folder: String? = null,
+    /** Whether the uploaded copy may be removed again after a successful retry. */
+    val canDeleteSource: Boolean = false,
+    /** SAF document of the original, replayed by a retry when it is known. */
+    val documentUri: String? = null,
 )
 
 /** Everything the explorer renders, including the selected folder and search. */
@@ -95,6 +104,12 @@ data class ExplorerUiState(
     val gallerySyncing: Boolean = false,
     val galleryLastSync: String? = null,
     val gallerySyncedCount: Int = 0,
+    /** Files this sync run found waiting, so progress has a known total. */
+    val galleryPlanned: Int = 0,
+    /** Files already handled by the running sync, success or failure. */
+    val galleryDone: Int = 0,
+    /** Rough remaining time of the running sync; null while it is unknown. */
+    val galleryEtaSeconds: Long? = null,
     val autoSaveSupported: Boolean = false,
     val autoSavePhotos: Boolean = false,
     /** How many files a batch uploads or downloads at once (Settings). */
@@ -176,7 +191,7 @@ data class ExplorerUiState(
 
     /** Old messages still waiting for their type topic, i.e. the tidy button's count. */
     val looseFileCount: Int
-        get() = files.count { !it.folderFromCaption }
+        get() = files.count { tidyTarget(it, autoTopics) != null }
 }
 
 /** True for a file stored directly in [folder] or in one of its subfolders. */
@@ -478,11 +493,15 @@ class CloudFilesViewModel(
         if (!state.value.autoTopics) return
         if (tidyJob?.isActive == true) return
         val firstPass = !preferences.looseFilesTidied()
-        if (!firstPass && preferences.tidyPending().isEmpty()) return
+        // One pass re-files the uploads the folder sync left in "Galeri" before
+        // files were filed by type.
+        val retypePass = !preferences.galleryFilesRetyped()
+        if (!firstPass && !retypePass && preferences.tidyPending().isEmpty()) return
         // Safe to mark before the move: whatever does not make it is kept in
         // cloud.tidyPending and retried by a later pass.
         preferences.setLooseFilesTidied(true)
-        launchTidy(chatId, tidyEverything = firstPass, manual = false)
+        if (retypePass) preferences.setGalleryFilesRetyped(true)
+        launchTidy(chatId, tidyEverything = firstPass || retypePass, manual = false)
     }
 
     /**
@@ -551,7 +570,12 @@ class CloudFilesViewModel(
      */
     private suspend fun runTidy(chatId: Long, tidyEverything: Boolean, manual: Boolean) {
         val pending = preferences.tidyPending()
-        val targets = tidyTargets(state.value.files, pending, tidyEverything)
+        val targets = tidyTargets(
+            files = state.value.files,
+            pending = pending,
+            tidyEverything = tidyEverything,
+            autoTopics = state.value.autoTopics,
+        )
         if (targets.isEmpty()) {
             // Remembered ids that vanished or already carry a caption need no retry.
             if (pending.isNotEmpty()) preferences.setTidyPending(emptySet())
@@ -566,27 +590,38 @@ class CloudFilesViewModel(
 
         // The whole batch is remembered first: a launch killed in the middle still
         // retries the rest instead of leaving those files untracked.
-        preferences.setTidyPending(targets.mapTo(mutableSetOf<Long>()) { it.messageId })
-        logDiagnostic(LOG_TAG, "rapikan: ${targets.size} berkas tanpa topik")
+        val remaining = targets.mapTo(mutableSetOf<Long>()) { it.file.messageId }
+        preferences.setTidyPending(remaining)
+        // A forward + delete per file is slow and Telegram throttles bursts, so a
+        // pass moves a slice; the rest stays in tidyPending and is picked up by
+        // the next launch instead of flooding the account.
+        val batch = targets.take(MAX_TIDY_PER_PASS)
+        logDiagnostic(LOG_TAG, "rapikan: ${targets.size} berkas, ${batch.size} diproses sekarang")
         state.update {
             it.copy(tidying = true, status = "Merapikan ${targets.size} berkas lama…", error = null)
         }
 
         var moved = 0
         val failed = mutableSetOf<Long>()
-        targets.forEach { file ->
-            val folder = FileCategories.folderFor(file.name)
+        batch.forEach { move ->
             val ok = runCatching {
-                repository.moveToTypeTopic(chatId, file.messageId, folder)
+                repository.moveToTypeTopic(chatId, move.file.messageId, move.folder)
             }.getOrDefault(false)
-            if (ok) moved++ else failed += file.messageId
+            if (ok) {
+                moved++
+                remaining -= move.file.messageId
+            } else {
+                failed += move.file.messageId
+            }
         }
-        preferences.setTidyPending(failed)
+        preferences.setTidyPending(remaining)
         logDiagnostic(LOG_TAG, "rapikan selesai: $moved dipindah, ${failed.size} gagal")
         state.update {
             it.copy(
                 tidying = false,
                 status = when {
+                    moved > 0 && remaining.isNotEmpty() ->
+                        "$moved berkas dipindah ke topik jenisnya, ${remaining.size} menyusul"
                     moved > 0 -> "$moved berkas lama dipindah ke topik jenisnya"
                     manual -> "Tidak ada berkas lama yang bisa dirapikan"
                     else -> null
@@ -931,6 +966,10 @@ class CloudFilesViewModel(
                                     fileName = name,
                                     direction = TransferDirection.Upload,
                                     progress = 0f,
+                                    localPath = request.localPath,
+                                    folder = request.folder,
+                                    canDeleteSource = request.canDeleteSource,
+                                    documentUri = request.documentUri,
                                 ),
                             )
 
@@ -943,6 +982,21 @@ class CloudFilesViewModel(
                                 chatId = chatId,
                                 localPath = request.localPath,
                                 folder = request.folder,
+                                onProgress = { fraction ->
+                                    // The notification follows the whole batch, not
+                                    // one file: the bar would jump back otherwise.
+                                    // Read without the lock on purpose: this only
+                                    // labels the notification, and a stale count by
+                                    // one file is harmless.
+                                    val done = finished
+                                    val overall = ((done + fraction) / requests.size)
+                                        .coerceIn(0f, 1f)
+                                    notifier.progress(
+                                        "Mengunggah ${done + 1}/${requests.size} berkas",
+                                        "$name · ${(fraction * 100).toInt()}%",
+                                        overall,
+                                    )
+                                },
                             )
                             logDiagnostic(
                                 LOG_TAG,
@@ -971,7 +1025,11 @@ class CloudFilesViewModel(
                             }
                             // One ongoing notification for the whole batch, updated
                             // instead of stacking a progress bar per file.
-                            notifier.progress("Mengunggah berkas", message)
+                            notifier.progress(
+                                "Mengunggah berkas",
+                                message,
+                                (finished.toFloat() / requests.size).coerceIn(0f, 1f),
+                            )
                             result.fold(
                                 onSuccess = {
                                     if (single) {
@@ -1507,15 +1565,33 @@ class CloudFilesViewModel(
         }
     }
 
-    /** Restarts a failed download; the old entry is replaced by the new attempt. */
+    /** Restarts a failed transfer; the old entry is replaced by the new attempt. */
     fun retryTransfer(item: TransferItem) {
-        val file = item.file
-        if (file == null) {
+        item.file?.let { file ->
+            removeTransfer(item.id)
+            download(file)
+            return
+        }
+        val path = item.localPath
+        if (item.direction != TransferDirection.Upload || path == null) {
             reportError("Transfer ini tidak bisa diulang dari sini")
             return
         }
+        if (!FileSystem.SYSTEM.exists(path.toPath())) {
+            reportError("Salinan berkas sudah dibersihkan; unggah ulang dari perangkat")
+            return
+        }
         removeTransfer(item.id)
-        download(file)
+        startUploads(
+            requests = listOf(
+                UploadRequest(
+                    localPath = path,
+                    folder = item.folder,
+                    documentUri = item.documentUri,
+                ),
+            ),
+            summary = null,
+        )
     }
 
     /**
@@ -1684,6 +1760,34 @@ class CloudFilesViewModel(
                         .keys
                 ).toMutableSet()
 
+            // Count the waiting files before copying anything, so the banner and
+            // the notification can say how many files and roughly how long,
+            // instead of showing an endless spinner.
+            var planned = 0
+            folders.forEach { folder ->
+                planned += runCatching {
+                    gallerySource.countPending(folder, attempted)
+                }.getOrDefault(0)
+            }
+            val startedAt = TimeSource.Monotonic.markNow()
+            var doneSoFar = 0
+
+            fun etaText(seconds: Long?): String = when {
+                seconds == null -> "menghitung…"
+                seconds < 60 -> "±${seconds.coerceAtLeast(1)} detik"
+                else -> "±${(seconds + 59) / 60} menit"
+            }
+
+            state.update {
+                it.copy(galleryPlanned = planned, galleryDone = 0, galleryEtaSeconds = null)
+            }
+            logDiagnostic(LOG_TAG, "sinkron folder: $planned berkas menunggu")
+            notifier.progress(
+                "Sinkron folder",
+                "0/$planned berkas · menyiapkan…",
+                0f,
+            )
+
             for (folder in folders) {
                 var folderUploaded = 0
                 var folderFailed = 0
@@ -1797,9 +1901,33 @@ class CloudFilesViewModel(
                                             )
                                         },
                                     )
+                                    val eta = keyLock.withLock {
+                                        doneSoFar++
+                                        val elapsed = startedAt.elapsedNow().inWholeSeconds
+                                        val perFile = if (doneSoFar > 0) {
+                                            elapsed.toDouble() / doneSoFar
+                                        } else {
+                                            0.0
+                                        }
+                                        val remaining = ((planned - doneSoFar).coerceAtLeast(0) * perFile)
+                                            .toLong()
+                                            .takeIf { planned > doneSoFar }
+                                        state.update {
+                                            it.copy(
+                                                galleryDone = doneSoFar,
+                                                galleryEtaSeconds = remaining,
+                                            )
+                                        }
+                                        remaining
+                                    }
                                     notifier.progress(
                                         "Sinkron folder",
-                                        "${folder.name} · ${file.name} selesai",
+                                        "$doneSoFar/$planned berkas · ${folder.name} · sisa ${etaText(eta)}",
+                                        if (planned > 0) {
+                                            (doneSoFar.toFloat() / planned).coerceIn(0f, 1f)
+                                        } else {
+                                            null
+                                        },
                                     )
                                 }
                             }
@@ -1831,7 +1959,7 @@ class CloudFilesViewModel(
             if (uploaded > 0) {
                 notifyTransfer(
                     "Sinkron folder selesai",
-                    "$uploaded berkas tersimpan di folder Galeri$skippedNote$originalsNote",
+                    "$uploaded berkas tersimpan di topiknya$skippedNote$originalsNote",
                 )
             } else if (failed > 0) {
                 notifyTransfer(
@@ -1849,6 +1977,9 @@ class CloudFilesViewModel(
                     gallerySyncing = false,
                     galleryLastSync = stamp,
                     gallerySyncedCount = preferences.gallerySyncedKeys().size,
+                    galleryPlanned = 0,
+                    galleryDone = 0,
+                    galleryEtaSeconds = null,
                     status = when {
                         uploaded > 0 -> "$uploaded berkas disinkronkan$skippedNote$originalsNote"
                         failed == 0 && skipped > 0 ->
@@ -1905,12 +2036,14 @@ class CloudFilesViewModel(
         chatId: Long,
         localPath: String,
         folder: String?,
+        onProgress: (Float) -> Unit = {},
     ): Result<Unit> = runCatching {
         // Images carry a small generated preview so the group message (and the
         // file card) has a cover from the first upload onwards.
         val thumbnail = withContext(Dispatchers.Default) { createUploadThumbnail(localPath) }
         repository.upload(chatId, localPath, folder, thumbnail) { progress ->
             updateTransfer(transferId) { it.copy(progress = progress) }
+            progress?.let(onProgress)
         }
     }.onSuccess {
         updateTransfer(transferId) {
@@ -2012,9 +2145,12 @@ class CloudFilesViewModel(
         const val CHANNEL_RETRY_MILLIS = 1_500L
         const val PAGE_ATTEMPTS = 3
         const val PAGE_RETRY_MILLIS = 1_000L
-        const val GALLERY_FOLDER = "Galeri"
+        const val GALLERY_FOLDER = FileCategories.GALLERY
         const val MAX_GALLERY_ATTEMPTS = 3
         const val MAX_COMPLETE_PAGES = 500
+
+        /** Moves per tidy pass; the rest waits for the next one. */
+        const val MAX_TIDY_PER_PASS = 40
         const val MAX_COVER_CACHE_ENTRIES = 500
         const val MAX_PREVIEW_CACHE_ENTRIES = 12
     }

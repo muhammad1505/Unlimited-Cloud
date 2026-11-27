@@ -23,9 +23,14 @@ class LooseFilesTest {
             file(3, "rapi.zip", folder = "Arsip"),
         )
 
-        val targets = tidyTargets(files, pending = emptySet(), tidyEverything = true)
+        val targets = tidyTargets(
+            files,
+            pending = emptySet(),
+            tidyEverything = true,
+            autoTopics = true,
+        )
 
-        assertEquals(listOf(1L, 2L), targets.map { it.messageId })
+        assertEquals(listOf(1L, 2L), targets.map { it.file.messageId })
     }
 
     @Test
@@ -36,9 +41,14 @@ class LooseFilesTest {
             file(3, "catatan.txt"),
         )
 
-        val targets = tidyTargets(files, pending = setOf(2L, 9L), tidyEverything = false)
+        val targets = tidyTargets(
+            files,
+            pending = setOf(2L, 9L),
+            tidyEverything = false,
+            autoTopics = true,
+        )
 
-        assertEquals(listOf(2L), targets.map { it.messageId })
+        assertEquals(listOf(2L), targets.map { it.file.messageId })
     }
 
     @Test
@@ -48,14 +58,42 @@ class LooseFilesTest {
             file(2, "manual.pdf", folder = "Kerja"),
         )
 
-        assertTrue(tidyTargets(files, pending = setOf(1L, 2L), tidyEverything = true).isEmpty())
-        assertTrue(tidyTargets(files, pending = setOf(1L, 2L), tidyEverything = false).isEmpty())
+        assertTrue(
+            tidyTargets(files, setOf(1L, 2L), tidyEverything = true, autoTopics = true).isEmpty(),
+        )
+        assertTrue(
+            tidyTargets(files, setOf(1L, 2L), tidyEverything = false, autoTopics = true).isEmpty(),
+        )
     }
 
     @Test
     fun anEmptyPendingQueueMeansNothingToRetry() {
         val files = listOf(file(1, "lama.jpg"))
 
-        assertTrue(tidyTargets(files, pending = emptySet(), tidyEverything = false).isEmpty())
+        assertTrue(
+            tidyTargets(files, emptySet(), tidyEverything = false, autoTopics = true).isEmpty(),
+        )
+    }
+
+    @Test
+    fun galleryUploadsAreRefiledIntoTheirTypeTopic() {
+        val files = listOf(
+            file(1, "liburan.mp4", folder = FileCategories.GALLERY),
+            file(2, "pantai.jpg", folder = "${FileCategories.GALLERY}/Liburan/Pantai"),
+        )
+
+        val targets = tidyTargets(files, emptySet(), tidyEverything = true, autoTopics = true)
+
+        assertEquals(
+            listOf(FileCategories.VIDEOS, "${FileCategories.PHOTOS}/Liburan/Pantai"),
+            targets.map { it.folder },
+        )
+    }
+
+    @Test
+    fun galleryUploadsStayWhenAutomaticTopicsAreOff() {
+        val files = listOf(file(1, "liburan.mp4", folder = FileCategories.GALLERY))
+
+        assertTrue(tidyTargets(files, emptySet(), tidyEverything = true, autoTopics = false).isEmpty())
     }
 }

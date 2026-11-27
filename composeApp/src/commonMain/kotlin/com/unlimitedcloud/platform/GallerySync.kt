@@ -60,6 +60,16 @@ interface GallerySyncSource {
         limit: Int,
     ): GalleryBatch
 
+    /**
+     * How many files are still waiting, counted from metadata only. Nothing is
+     * copied to the upload cache, so a sync can tell the user up front how much
+     * it is about to move without paying for the whole batch twice.
+     */
+    suspend fun countPending(
+        folder: GalleryFolder,
+        alreadySynced: Set<String>,
+    ): Int
+
     /** Removes the temporary cache copies once TDLib finished with them. */
     fun release(files: List<GalleryFile>)
 }

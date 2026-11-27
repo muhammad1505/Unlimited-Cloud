@@ -276,7 +276,10 @@ private fun TransferCard(
 
             // Finished rows are cleared together by "Bersihkan" above; a second
             // per-row delete action only repeated it in a smaller size.
-            if (transfer.status == TransferStatus.Failed && transfer.file != null) {
+            if (
+                transfer.status == TransferStatus.Failed &&
+                (transfer.file != null || transfer.localPath != null)
+            ) {
                 TextButton(onClick = onRetry) {
                     Text("Coba lagi", style = MaterialTheme.typography.labelSmall)
                 }

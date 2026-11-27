@@ -99,6 +99,27 @@ private class AndroidGallerySyncSource(
         GalleryBatch(files = files, skippedKeys = skipped)
     }
 
+    override suspend fun countPending(
+        folder: GalleryFolder,
+        alreadySynced: Set<String>,
+    ): Int = withContext(Dispatchers.IO) {
+        val treeUri = runCatching { Uri.parse(folder.id) }.getOrNull()
+            ?: return@withContext 0
+        val rootDocumentId = runCatching {
+            DocumentsContract.getTreeDocumentId(treeUri)
+        }.getOrNull() ?: return@withContext 0
+        collectDocuments(
+            treeUri = treeUri,
+            parentDocumentId = rootDocumentId,
+            relativeDirectory = "",
+            depth = 0,
+            budget = MAX_SCAN,
+        ).count { document ->
+            document.documentId !in alreadySynced &&
+                "${document.name}|${document.documentId}" !in alreadySynced
+        }
+    }
+
     /**
      * How many bytes one batch may copy. Half of the free space leaves room for
      * TDLib's own upload buffer; an unreadable cache falls back to a fixed value

@@ -21,6 +21,20 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.5.0 — 27 November 2026
+
+### Baru
+
+- Sinkron folder menampilkan rencana di awal: jumlah berkas yang menunggu dan perkiraan sisa waktu, di kartu Pengaturan maupun di notifikasi.
+- Unggahan yang gagal punya tombol "Coba lagi" di tab Transfer, memakai salinan berkas yang masih ada.
+- Dialog penjelasan akses folder muncul sebelum pemilih folder sistem dibuka, jadi akses hanya diberikan untuk folder yang Anda konfirmasi sendiri.
+
+### Perbaikan
+
+- Berkas galeri lama yang masih di topik "Galeri" dipindahkan ke topik jenisnya (video ke Video, foto ke Foto) berikut struktur subfoldernya. Berjalan otomatis sekali, maksimal 40 berkas per putaran agar tidak kena batas Telegram; sisanya menyusul di putaran berikutnya.
+- Tombol kembali di daftar berkas tidak lagi melompat ke awal: folder induk dibuka lebih dulu, dan cabang folder yang sedang terbuka tidak lagi menutup saat kembali dari daftar berkas.
+- Notifikasi progres transfer menampilkan jumlah berkas dan persentase dengan bilah yang benar-benar bergerak, bukan spinner tanpa keterangan.
+
 ## 1.4.7 — 27 November 2026
 
 ### Perbaikan
