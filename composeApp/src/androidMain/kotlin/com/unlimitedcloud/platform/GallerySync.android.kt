@@ -36,15 +36,23 @@ private class AndroidGallerySyncSource(
         folder: GalleryFolder,
         alreadySynced: Set<String>,
         limit: Int,
-    ): List<GalleryFile> = withContext(Dispatchers.IO) {
+    ): GalleryBatch = withContext(Dispatchers.IO) {
         clearStaleCache()
         val treeUri = runCatching { Uri.parse(folder.id) }.getOrNull()
-            ?: return@withContext emptyList()
+            ?: return@withContext GalleryBatch()
         val rootDocumentId = runCatching {
             DocumentsContract.getTreeDocumentId(treeUri)
-        }.getOrNull() ?: return@withContext emptyList()
+        }.getOrNull() ?: return@withContext GalleryBatch()
 
-        collectDocuments(
+        val cacheDirectory = File(context.cacheDir, "gallery-sync").apply { mkdirs() }
+        // Every picked document is copied before TDLib can read it, so one folder
+        // of videos could fill the device. A batch may use at most half of the
+        // free space (capped below); a document that does not fit is reported as
+        // skipped instead of failing the whole batch or the copy silently.
+        var remainingBytes = cacheBudget(cacheDirectory)
+        val skipped = mutableListOf<String>()
+
+        val files = collectDocuments(
             treeUri = treeUri,
             parentDocumentId = rootDocumentId,
             relativeDirectory = "",
@@ -62,7 +70,16 @@ private class AndroidGallerySyncSource(
             }
             .take(limit)
             .mapNotNull { document ->
-                val copy = copyToCache(treeUri, document) ?: return@mapNotNull null
+                if (document.size > remainingBytes) {
+                    skipped += document.documentId
+                    return@mapNotNull null
+                }
+                val copy = copyToCache(cacheDirectory, treeUri, document)
+                if (copy == null) {
+                    skipped += document.documentId
+                    return@mapNotNull null
+                }
+                remainingBytes -= copy.length()
                 GalleryFile(
                     // The document id alone: the old "name|id" key changed when a
                     // file was renamed, which uploaded it a second time. The
@@ -75,6 +92,19 @@ private class AndroidGallerySyncSource(
                 )
             }
             .toList()
+
+        GalleryBatch(files = files, skippedKeys = skipped)
+    }
+
+    /**
+     * How many bytes one batch may copy. Half of the free space leaves room for
+     * TDLib's own upload buffer; an unreadable cache falls back to a fixed value
+     * so the sync can still try. A single file may be larger than the batch
+     * budget would suggest: this only refuses documents that cannot fit at all.
+     */
+    private fun cacheBudget(directory: File): Long {
+        val usable = directory.usableSpace
+        return if (usable > 0) usable / 2 else FALLBACK_CACHE_BYTES
     }
 
     override fun release(files: List<GalleryFile>) {
@@ -149,8 +179,12 @@ private class AndroidGallerySyncSource(
         return documents
     }
 
-    private fun copyToCache(treeUri: Uri, document: ScannedDocument): File? = runCatching {
-        val targetDirectory = File(context.cacheDir, "gallery-sync").apply { mkdirs() }
+    private fun copyToCache(
+        cacheDirectory: File,
+        treeUri: Uri,
+        document: ScannedDocument,
+    ): File? = runCatching {
+        val targetDirectory = cacheDirectory.apply { mkdirs() }
         val safeName = document.name
             .substringAfterLast('/')
             .substringAfterLast('\\')
@@ -194,6 +228,9 @@ private class AndroidGallerySyncSource(
 
         /** Copies older than this were left behind by a killed sync. */
         const val STALE_CACHE_MILLIS = 2L * 60 * 60 * 1000
+
+        /** Budget when the file system cannot report free space. */
+        const val FALLBACK_CACHE_BYTES = 512L * 1024 * 1024
     }
 }
 

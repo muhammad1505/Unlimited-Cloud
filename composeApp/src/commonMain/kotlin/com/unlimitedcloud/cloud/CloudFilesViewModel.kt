@@ -4,6 +4,7 @@ import com.unlimitedcloud.log.LOG_TAG
 import com.unlimitedcloud.log.logDiagnostic
 import com.unlimitedcloud.log.platformTimestamp
 import com.unlimitedcloud.platform.GalleryBackgroundSync
+import com.unlimitedcloud.platform.GalleryBatch
 import com.unlimitedcloud.platform.GalleryFile
 import com.unlimitedcloud.platform.GalleryFolder
 import com.unlimitedcloud.platform.GallerySyncSource
@@ -1108,6 +1109,9 @@ class CloudFilesViewModel(
 
             var uploaded = 0
             var failed = 0
+            // Documents the source could not prepare (unreadable, or too big for
+            // the batch's cache budget). They are reported instead of vanishing.
+            var skipped = 0
 
             // Every selected folder contributes its own incremental batch, so a
             // second folder does not wait for the first one to be exhausted.
@@ -1143,9 +1147,21 @@ class CloudFilesViewModel(
                             LOG_TAG,
                             "galeri ${folder.name} gagal dibaca: ${failure.message}",
                         )
-                        emptyList()
+                        GalleryBatch()
                     }
-                    if (batch.isEmpty()) break
+                    // Skipped keys are not retried inside this run: the budget
+                    // shrinks as files are copied, so a second attempt would
+                    // read the same unreadable document again. The next sync
+                    // starts with fresh space and tries them again.
+                    batch.skippedKeys.forEach { key -> attempted += key }
+                    if (batch.skippedKeys.isNotEmpty()) {
+                        skipped += batch.skippedKeys.size
+                        logDiagnostic(
+                            LOG_TAG,
+                            "galeri ${folder.name}: ${batch.skippedKeys.size} berkas dilewati",
+                        )
+                    }
+                    if (batch.files.isEmpty()) break
 
                     val syncedKeys = mutableListOf<String>()
                     val failedKeys = mutableListOf<String>()
@@ -1154,14 +1170,14 @@ class CloudFilesViewModel(
                     // hundreds of files used to move one file at a time.
                     val keyLock = Mutex()
                     coroutineScope {
-                        val queue = Channel<GalleryFile>(capacity = batch.size)
-                        batch.forEach { file ->
+                        val queue = Channel<GalleryFile>(capacity = batch.files.size)
+                        batch.files.forEach { file ->
                             attempted += file.key
                             queue.trySend(file)
                         }
                         queue.close()
 
-                        repeat(minOf(state.value.parallelTransfers, batch.size)) {
+                        repeat(minOf(state.value.parallelTransfers, batch.files.size)) {
                             launch {
                                 for (file in queue) {
                                     val transferId = "transfer-${nextTransferId()}"
@@ -1233,13 +1249,17 @@ class CloudFilesViewModel(
             }
 
             notifier.clearProgress()
+            val skippedNote = if (skipped > 0) " · $skipped berkas dilewati" else ""
             if (uploaded > 0) {
                 notifyTransfer(
                     "Sinkron folder selesai",
-                    "$uploaded berkas tersimpan di folder Galeri",
+                    "$uploaded berkas tersimpan di folder Galeri$skippedNote",
                 )
             } else if (failed > 0) {
-                notifyTransfer("Sinkron folder gagal", "$failed berkas tidak bisa diunggah")
+                notifyTransfer(
+                    "Sinkron folder gagal",
+                    "$failed berkas tidak bisa diunggah$skippedNote",
+                )
             }
 
             if (uploaded > 0) refresh()
@@ -1252,7 +1272,9 @@ class CloudFilesViewModel(
                     galleryLastSync = stamp,
                     gallerySyncedCount = preferences.gallerySyncedKeys().size,
                     status = when {
-                        uploaded > 0 -> "$uploaded berkas disinkronkan"
+                        uploaded > 0 -> "$uploaded berkas disinkronkan$skippedNote"
+                        failed == 0 && skipped > 0 ->
+                            "$skipped berkas dilewati: tidak bisa dibaca atau tidak muat di cache"
                         failed == 0 -> "Folder sudah sinkron"
                         else -> null
                     },

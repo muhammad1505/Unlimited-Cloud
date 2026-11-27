@@ -27,6 +27,16 @@ data class GalleryFile(
 )
 
 /**
+ * One scan result: the files ready to upload plus the keys that could not be
+ * prepared. Android reports the latter when a document is unreadable or does not
+ * fit the cache budget; Desktop copies nothing, so it is always empty there.
+ */
+data class GalleryBatch(
+    val files: List<GalleryFile> = emptyList(),
+    val skippedKeys: List<String> = emptyList(),
+)
+
+/**
  * Reads files from a user-picked folder without any storage permission.
  *
  * Every document counts, whatever its type: images, documents, archives,
@@ -42,7 +52,7 @@ interface GallerySyncSource {
         folder: GalleryFolder,
         alreadySynced: Set<String>,
         limit: Int,
-    ): List<GalleryFile>
+    ): GalleryBatch
 
     /** Removes the temporary cache copies once TDLib finished with them. */
     fun release(files: List<GalleryFile>)

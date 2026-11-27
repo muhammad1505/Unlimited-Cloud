@@ -22,9 +22,10 @@ Android dan Desktop memakai kode UI, domain, dan state management yang sama.
   lewat WorkManager saat aplikasi tertutup; di desktop folder dibaca langsung dari
   disk.
 - **Transfer paralel yang bisa diatur**: 1–6 berkas sekaligus, diatur di Pengaturan.
-- **Ikon tray desktop**: menutup jendela hanya menyembunyikannya, menu tray bisa
-  membuka aplikasi lagi atau keluar, dan progres serta hasil transfer muncul di
-  tooltip dan balon notifikasi tray.
+- **Ikon tray desktop**: menutup jendela hanya menyembunyikannya, dan menu tray
+  menampilkan jumlah transfer aktif, tombol **Sinkronkan folder sekarang**, serta
+  buka/keluar. Progres dan hasil transfer muncul di tooltip dan balon notifikasi
+  tray.
 - **Simpan foto ke galeri perangkat** (Android 10+): foto yang diunduh disalin ke
   `Pictures/Unlimited Cloud` lewat MediaStore, juga tanpa izin penyimpanan.
 - **Panduan optimasi baterai** yang mengikuti kebijakan Google Play/OEM: membuka
@@ -203,6 +204,9 @@ python3 scripts/check-versions.py
 - Sinkronisasi folder mengunggah semua berkas baru saat aplikasi dibuka. Worker
   WorkManager memproses 8 berkas per folder tiap putaran agar muat batas waktu
   sistem, dan jadwalnya tetap bergantung pada kebijakan baterai perangkat.
+- Di Android setiap berkas disalin ke cache sebelum diunggah. Satu batch memakai
+  paling banyak setengah ruang kosong; berkas yang tidak muat dilewati dan
+  dilaporkan, lalu dicoba lagi pada sinkron berikutnya.
 - Ikon tray membutuhkan sesi desktop yang menyediakan system tray; di sesi tanpa
   tray (misalnya GNOME Wayland) menutup jendela langsung keluar dari aplikasi.
   Balon notifikasi tray juga bergantung pada dukungan sistem operasi.

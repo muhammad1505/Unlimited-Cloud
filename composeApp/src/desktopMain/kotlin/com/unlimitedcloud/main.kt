@@ -1,6 +1,8 @@
 package com.unlimitedcloud
 
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -14,6 +16,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.unlimitedcloud.auth.TelegramEngine
+import com.unlimitedcloud.cloud.CloudFilesViewModel
 import com.unlimitedcloud.di.appModule
 import com.unlimitedcloud.platform.DesktopTray
 import java.awt.Image as AwtImage
@@ -38,6 +41,12 @@ fun main() {
         val icon = remember { loadWindowIcon() }
         val trayImage = remember { loadTrayImage() }
         var trayReady by remember { mutableStateOf(false) }
+        // The same Koin instance the signed-in shell uses; the tray menu needs it
+        // to offer a sync and to show how many transfers are running.
+        val viewModel = remember {
+            runCatching { GlobalContext.getOrNull()?.get<CloudFilesViewModel>() }.getOrNull()
+        }
+        val uiState = viewModel?.uiState?.collectAsState()?.value
 
         fun showWindow() {
             windowState.isMinimized = false
@@ -55,9 +64,27 @@ fun main() {
         // a click on the icon) brings it back. Transfers keep running meanwhile.
         DisposableEffect(trayImage) {
             trayReady = trayImage?.let { image ->
-                DesktopTray.install(image = image, onOpen = ::showWindow, onQuit = ::quit)
+                DesktopTray.install(
+                    image = image,
+                    onOpen = ::showWindow,
+                    onQuit = ::quit,
+                    onSync = { viewModel?.syncGallery() },
+                )
             } ?: false
             onDispose { DesktopTray.remove() }
+        }
+
+        // Keep the menu line and the sync entry in step with the window.
+        LaunchedEffect(
+            uiState?.activeTransfers?.size,
+            uiState?.gallerySyncing,
+            uiState?.galleryFolders?.size,
+        ) {
+            DesktopTray.updateStatus(
+                activeTransfers = uiState?.activeTransfers?.size ?: 0,
+                syncing = uiState?.gallerySyncing ?: false,
+                hasFolders = uiState?.galleryFolders?.isNotEmpty() == true,
+            )
         }
 
         Window(

@@ -26,11 +26,11 @@ private object DesktopGallerySyncSource : GallerySyncSource {
         folder: GalleryFolder,
         alreadySynced: Set<String>,
         limit: Int,
-    ): List<GalleryFile> = withContext(Dispatchers.IO) {
-        val root = runCatching { File(folder.id) }.getOrNull() ?: return@withContext emptyList()
-        if (!root.isDirectory) return@withContext emptyList()
+    ): GalleryBatch = withContext(Dispatchers.IO) {
+        val root = runCatching { File(folder.id) }.getOrNull() ?: return@withContext GalleryBatch()
+        if (!root.isDirectory) return@withContext GalleryBatch()
 
-        root.walkTopDown()
+        val files = root.walkTopDown()
             .maxDepth(MAX_DEPTH)
             .filter { file -> file.isFile && file.canRead() }
             .take(MAX_SCAN)
@@ -53,6 +53,10 @@ private object DesktopGallerySyncSource : GallerySyncSource {
                 )
             }
             .toList()
+
+        // Files are read from the original location, so nothing can be skipped
+        // for size or a failed cache copy.
+        GalleryBatch(files = files)
     }
 
     /** Nothing was copied, so there is no temporary file to remove. */

@@ -133,7 +133,10 @@ dibangunkan WorkManager tetap aman. Worker menunggu sesi TDLib tersimpan siap,
 menjalankan hingga 8 berkas per folder (parameter `perFolderLimit`), lalu berhenti.
 Sinkronisasi dari layar Pengaturan memakai batas tak terhingga sehingga semua berkas
 baru di folder terpilih terunggah dalam satu sesi. Kunci sinkron dicatat per dokumen,
-jadi sisa batch dilanjutkan pada jadwal berikutnya. Yang disalin adalah semua jenis
+jadi sisa batch dilanjutkan pada jadwal berikutnya. Satu batch Android menyalin
+paling banyak setengah ruang cache yang kosong; dokumen yang tidak
+muat atau gagal disalin masuk ke `GalleryBatch.skippedKeys`, dilaporkan di status dan
+notifikasi, lalu dicoba lagi pada sinkron berikutnya. Yang disalin adalah semua jenis
 berkas (bukan hanya gambar) beserta struktur subfoldernya: `Galeri/Liburan/Pantai`.
 Tidak ada layanan latar depan; progres dan hasil transfer muncul sebagai notifikasi
 bila izinnya diberikan, dan `FOREGROUND_SERVICE` bawaan WorkManager tetap dihapus
@@ -151,7 +154,10 @@ Transfer berjalan lewat kumpulan worker (`Channel` + `coroutineScope`). Jumlahny
 diambil dari `AppPreferences.transferParallelism()` (1–6, bawaan 3) dan dapat
 diubah di Pengaturan; batch yang sedang berjalan memakai jumlah saat batch dimulai.
 Di desktop, `TransferNotifier` diteruskan ke ikon tray: tooltip mengikuti batch yang
-berjalan dan hasilnya tampil sebagai balon notifikasi.
+berjalan dan hasilnya tampil sebagai balon notifikasi. Menu tray membaca
+`CloudFilesViewModel.uiState` yang sama dengan jendela: satu baris status (transfer
+aktif atau folder siap), tombol **Sinkronkan folder sekarang** yang aktif hanya bila
+ada folder terpilih dan tidak ada sinkron berjalan, serta buka/keluar.
 
 `MediaSaver` menulis foto unduhan ke MediaStore dengan `IS_PENDING`: entri baru
 tampil di galeri setelah salinan selesai, dan entri dihapus bila penyalinan gagal.

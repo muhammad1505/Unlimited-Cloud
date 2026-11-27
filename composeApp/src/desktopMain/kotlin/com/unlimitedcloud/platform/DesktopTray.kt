@@ -9,18 +9,22 @@ import java.awt.TrayIcon
 
 /**
  * The desktop app's tray presence: one icon for the whole process, a menu to
- * bring the window back or quit, and a place to surface transfer feedback.
+ * bring the window back, start a folder sync, watch the transfer count or quit,
+ * and a place to surface transfer feedback.
  *
  * Plain AWT instead of the Compose `Tray` composable so the transfer notifier
- * can reach the same icon: the tooltip follows the running batch and a finished
- * upload/download posts a balloon message. Without that the desktop build had no
- * feedback at all once the window was hidden.
+ * and the shell can reach the same icon: the tooltip follows the running batch,
+ * a finished upload/download posts a balloon message, and the menu mirrors the
+ * state the window shows. Without that the desktop build had no feedback at all
+ * once the window was hidden.
  */
 internal object DesktopTray {
     private const val APP_NAME = "Unlimited Cloud"
     private const val MAX_TOOLTIP_LENGTH = 120
 
     private var trayIcon: TrayIcon? = null
+    private var statusItem: MenuItem? = null
+    private var syncItem: MenuItem? = null
 
     /** Some Linux sessions (GNOME on Wayland) expose no tray at all. */
     val supported: Boolean = runCatching { SystemTray.isSupported() }.getOrDefault(false)
@@ -30,14 +34,28 @@ internal object DesktopTray {
      * Tray support is not a guarantee that adding succeeds, so the result is
      * reported instead of assumed.
      */
-    fun install(image: Image, onOpen: () -> Unit, onQuit: () -> Unit): Boolean {
+    fun install(
+        image: Image,
+        onOpen: () -> Unit,
+        onQuit: () -> Unit,
+        onSync: () -> Unit,
+    ): Boolean {
         if (!supported) return false
         if (trayIcon != null) return true
         return runCatching {
+            val status = MenuItem("Belum ada folder sinkron").apply { isEnabled = false }
+            val sync = MenuItem("Sinkronkan folder sekarang").apply {
+                isEnabled = false
+                addActionListener { onSync() }
+            }
             val menu = PopupMenu()
             menu.add(MenuItem("Buka Unlimited Cloud").apply { addActionListener { onOpen() } })
             menu.addSeparator()
+            menu.add(status)
+            menu.add(sync)
+            menu.addSeparator()
             menu.add(MenuItem("Keluar").apply { addActionListener { onQuit() } })
+
             val icon = TrayIcon(image, APP_NAME, menu).apply {
                 isImageAutoSize = true
                 // Double click (and the platform's own click gesture) restores
@@ -46,8 +64,38 @@ internal object DesktopTray {
             }
             SystemTray.getSystemTray().add(icon)
             trayIcon = icon
+            statusItem = status
+            syncItem = sync
             true
         }.getOrDefault(false)
+    }
+
+    /**
+     * Mirrors the window state in the menu: the sync entry is only usable once a
+     * folder was picked and no other sync is running, and the first line says
+     * what the app is doing right now.
+     */
+    fun updateStatus(
+        activeTransfers: Int,
+        syncing: Boolean,
+        hasFolders: Boolean,
+    ) {
+        if (trayIcon == null) return
+        val statusText = when {
+            syncing -> "Menyinkronkan folder…"
+            activeTransfers > 0 && hasFolders ->
+                "$activeTransfers transfer aktif · folder siap"
+            activeTransfers > 0 -> "$activeTransfers transfer aktif"
+            !hasFolders -> "Belum ada folder sinkron"
+            else -> "Siap · folder sinkron terpasang"
+        }
+        onEdt {
+            statusItem?.label = statusText
+            syncItem?.apply {
+                label = if (syncing) "Menyinkronkan…" else "Sinkronkan folder sekarang"
+                isEnabled = hasFolders && !syncing
+            }
+        }
     }
 
     /** Balloon/toast message on platforms that show one; silent elsewhere. */
@@ -66,6 +114,8 @@ internal object DesktopTray {
     fun remove() {
         val icon = trayIcon ?: return
         trayIcon = null
+        statusItem = null
+        syncItem = null
         runCatching { SystemTray.getSystemTray().remove(icon) }
     }
 
@@ -83,6 +133,14 @@ internal object DesktopTray {
             runCatching { action(icon) }
         } else {
             EventQueue.invokeLater { runCatching { action(icon) } }
+        }
+    }
+
+    private fun onEdt(action: () -> Unit) {
+        if (EventQueue.isDispatchThread()) {
+            action()
+        } else {
+            EventQueue.invokeLater(action)
         }
     }
 }
