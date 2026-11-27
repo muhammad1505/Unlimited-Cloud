@@ -21,6 +21,23 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.3.9 — 27 November 2026
+
+### Baru
+
+- Transfer paralel kini bisa diatur lewat Pengaturan → Transfer → Berkas sekaligus (1–6, bawaan 3), jadi antrean besar selesai lebih cepat tanpa membanjiri koneksi.
+- Aplikasi desktop kini bisa menyinkronkan folder: pilih folder di komputer, lalu seluruh isinya diunggah langsung dari lokasi aslinya, termasuk subfolder, tanpa menyalin ke cache.
+- Tray desktop menampilkan jumlah transfer aktif, keadaan sinkron folder, dan progres di tooltip, serta mengirim balon notifikasi saat transfer selesai atau gagal walau jendela aplikasi sudah ditutup.
+- Menu tray memuat baris status dan perintah Sinkronkan folder sekarang, sehingga sinkron bisa dimulai tanpa membuka jendela.
+
+### Perbaikan
+
+- Sinkron folder tidak lagi hanya mengunggah foto dan video: semua jenis berkas ikut, struktur subfolder dipertahankan, dan berkas yang dilewati dilaporkan (lewat status, log, dan notifikasi) alih-alih dibuang diam-diam. Batas 500 berkas pada pemilih folder juga hilang.
+- Sinkron folder Android memakai setengah ruang kosong cache sebagai anggaran per batch (minimal 512 MiB bila sisanya tak terbaca), sehingga video besar tetap bisa disinkronkan tanpa memenuhi penyimpanan. Berkas yang tak muat dilewati dan dicoba lagi pada sinkron berikutnya, tidak dianggap gagal permanen.
+- Daftar Transfer kini mengikuti baris terbaru saat transfer baru muncul, tetapi hanya bila kamu masih berada di dekat puncak daftar; transfer lama yang sedang dibaca tidak lagi tertarik ke atas.
+- Notifikasi transfer menampilkan progres selama unggahan atau unduhan berjalan, lalu berubah menjadi hasil selesai atau gagal.
+- Pratinjau berkas langsung menampilkan sampul yang sudah tersimpan sambil versi penuhnya diunduh, jadi tidak ada lagi layar kosong dengan spinner.
+
 ## 1.3.8 — 26 November 2026
 
 ### Baru
