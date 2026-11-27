@@ -625,8 +625,9 @@ private fun FolderBrowser(
     onOpenFolder: (String?) -> Unit,
 ) {
     // A folder only exists as the caption of its messages, so the tree is built
-    // from the loaded files; "Tanpa folder" collects the files uploaded without
-    // a folder.
+    // from the loaded files. Uploads are always filed by type or by the folder
+    // the user picked, so the "Tanpa folder" row is only a fallback for messages
+    // that somehow arrive without a readable file name.
     val tree = remember(state.files) { buildFolderTree(state.files) }
     val looseFiles = remember(state.files) { state.files.filter { it.folder == null } }
     var expandedPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -1449,7 +1450,7 @@ private fun UploadDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Unggah berkas", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            text = "Pilih folder tujuan, lalu unggah beberapa berkas sekaligus atau seluruh folder beserta subfoldernya.",
+                            text = "Berkas otomatis masuk topik sesuai jenisnya (Foto, Video, Dokumen, dan seterusnya). Pilih folder hanya bila ingin menaruhnya di tempat lain.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1470,7 +1471,7 @@ private fun UploadDialog(
                             folder = null
                             customFolder = ""
                         },
-                        label = { Text("Tanpa folder") },
+                        label = { Text("Otomatis") },
                         shape = RoundedCornerShape(12.dp),
                     )
                     folders.forEach { existing ->

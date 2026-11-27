@@ -381,6 +381,13 @@ class CloudFileRepository(private val session: TdJsonSession) {
             ?.jsonPrimitive
             ?.intOrNull
         val messageId = message["id"]?.jsonPrimitive?.longOrNull ?: return null
+        val name = document["file_name"]?.jsonPrimitive?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+            ?: "file-$messageId"
+        // Files uploaded before automatic topics (and anything that reached the
+        // group outside the app) carry no folder caption. They are filed by type
+        // when read, so the explorer shows them under Foto, Video, ... right away
+        // instead of leaving them loose in "Tanpa folder".
         val folder = content["caption"]
             ?.jsonObject
             ?.get("text")
@@ -388,13 +395,12 @@ class CloudFileRepository(private val session: TdJsonSession) {
             ?.contentOrNull
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
+            ?: FileCategories.folderFor(name)
 
         return CloudFile(
             messageId = messageId,
             fileId = file["id"]?.jsonPrimitive?.intOrNull ?: return null,
-            name = document["file_name"]?.jsonPrimitive?.contentOrNull
-                ?.takeIf { it.isNotBlank() }
-                ?: "file-$messageId",
+            name = name,
             size = file["size"]?.jsonPrimitive?.longOrNull ?: 0L,
             folder = folder,
             thumbnailId = thumbnailId,

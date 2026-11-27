@@ -512,7 +512,7 @@ class CloudFilesViewModel(
 
     fun upload(localPath: String, folder: String?) {
         startUploads(
-            requests = listOf(UploadRequest(localPath, normalizeFolder(folder))),
+            requests = listOf(UploadRequest(localPath, folderFor(folder, localPath))),
             summary = null,
         )
     }
@@ -527,7 +527,7 @@ class CloudFilesViewModel(
         if (unique.isEmpty()) return
         val target = normalizeFolder(folder)
         startUploads(
-            requests = unique.map { path -> UploadRequest(path, target) },
+            requests = unique.map { path -> UploadRequest(path, folderFor(target, path)) },
             summary = "${unique.size} berkas",
         )
     }
@@ -710,6 +710,13 @@ class CloudFilesViewModel(
 
     private fun normalizeFolder(folder: String?): String? =
         folder?.trim()?.takeIf { it.isNotEmpty() }
+
+    /**
+     * Explicit folders win; without one the file is filed by its type. Every
+     * upload therefore has a topic, so nobody has to pick a folder first.
+     */
+    private fun folderFor(folder: String?, localPath: String): String =
+        normalizeFolder(folder) ?: FileCategories.folderFor(localPath.fileName())
 
     private fun String.fileName(): String =
         substringAfterLast('/').substringAfterLast('\\').ifBlank { "berkas" }
@@ -1347,14 +1354,15 @@ class CloudFilesViewModel(
                                         ),
                                     )
 
-                                    // Recreate the tree: a file from
-                                    // Liburan/Pantai lands in Galeri/Liburan/Pantai
-                                    // instead of being flattened.
-                                    val target = if (file.relativeDirectory.isBlank()) {
-                                        GALLERY_FOLDER
-                                    } else {
-                                        "$GALLERY_FOLDER/${file.relativeDirectory}"
-                                    }
+                                    // Synced files are filed by type as well, and
+                                    // the tree is recreated beneath that topic: a
+                                    // photo from Liburan/Pantai lands in
+                                    // Foto/Liburan/Pantai instead of "Galeri".
+                                    val target = FileCategories.folderFor(file.name) +
+                                        file.relativeDirectory
+                                            .takeIf { it.isNotBlank() }
+                                            ?.let { "/$it" }
+                                            .orEmpty()
                                     val result = uploadFile(
                                         transferId = transferId,
                                         chatId = chatId,
@@ -1578,7 +1586,6 @@ class CloudFilesViewModel(
         const val CHANNEL_RETRY_MILLIS = 1_500L
         const val PAGE_ATTEMPTS = 3
         const val PAGE_RETRY_MILLIS = 1_000L
-        const val GALLERY_FOLDER = "Galeri"
         const val MAX_GALLERY_ATTEMPTS = 3
         const val MAX_COVER_CACHE_ENTRIES = 500
         const val MAX_PREVIEW_CACHE_ENTRIES = 12

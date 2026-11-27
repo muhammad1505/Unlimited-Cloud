@@ -49,7 +49,14 @@ kasus native ada tetapi jaringan/TDLib tidak merespons.
 Channel pribadi adalah database sekaligus filesystem:
 
 - Setiap unggahan = satu pesan dokumen.
-- Caption pesan = nama folder virtual (`""` berarti root).
+- Caption pesan = nama folder virtual (`""` berarti root). Pesan tanpa caption
+  (unggahan lama atau berkas yang dikirim di luar aplikasi) difilingkan dari
+  ekstensi namanya, sehingga tidak ada berkas yang tertinggal di "Tanpa folder".
+- Unggahan tanpa folder pilihan pengguna otomatis masuk topik sesuai jenis:
+  `Foto`, `Video`, `Audio`, `Dokumen`, `Arsip`, `Aplikasi`, `Lainnya`
+  (`FileCategories.folderFor`). Folder yang dipilih manual tetap menang.
+  Sinkron galeri memakai topik yang sama dan mempertahankan subfolder aslinya,
+  misalnya `Foto/DCIM/Camera`.
 - Daftar berkas = `getChatHistory` dengan pagination `from_message_id`.
 - Hapus = `deleteMessages` dengan `revoke = true`, dipecah per 100 id karena
   TDLib menolak permintaan yang membawa lebih banyak id sekaligus.
