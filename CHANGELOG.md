@@ -21,6 +21,20 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.4.1 — 27 November 2026
+
+### Baru
+
+- Berkas kini otomatis masuk topik sesuai jenisnya: Foto, Video, Audio, Dokumen, Arsip, Aplikasi, atau Lainnya. Memilih folder tidak lagi wajib, dan berkas yang jenisnya tidak dikenali tetap punya topik sendiri.
+- Sinkron galeri ikut memakai topik jenis sekaligus mempertahankan subfolder aslinya, jadi foto dari `DCIM/Camera` masuk ke Foto/DCIM/Camera, bukan menumpuk di satu folder Galeri.
+- Sakelar "Kelompokkan otomatis" di Pengaturan → Penyimpanan mematikan pengelompokan bila kamu lebih suka memilih folder sendiri; unggahan kembali ke General dan sinkron galeri kembali ke folder Galeri.
+
+### Perbaikan
+
+- Berkas yang sudah diunggah sebelum fitur ini (tanpa folder) dirapikan sekali per akun: disalin ke topik jenisnya, diberi caption folder, lalu pesan lama dihapus. Penyalinan selalu berjalan sebelum penghapusan, jadi berkas tidak hilang bila penyalinan gagal.
+- Berkas lama tanpa folder kini dikelompokkan menurut jenisnya saat dibaca, sehingga tidak ada lagi berkas yang tersembunyi di "Tanpa folder" padahal sudah masuk grup.
+- Dialog unggah menyebut "Otomatis" (atau "Tanpa folder" saat sakelar dimatikan) dan menjelaskan bahwa jenis berkas menentukan topiknya.
+
 ## 1.4.0 — 27 November 2026
 
 ### Baru
