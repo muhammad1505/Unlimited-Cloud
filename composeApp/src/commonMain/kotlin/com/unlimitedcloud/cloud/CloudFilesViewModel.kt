@@ -14,6 +14,8 @@ import com.unlimitedcloud.platform.synchronizedBlock
 import com.unlimitedcloud.platform.createTransferNotifier
 import com.unlimitedcloud.platform.createUploadThumbnail
 import com.unlimitedcloud.settings.AppPreferences
+import com.unlimitedcloud.settings.MAX_TRANSFER_PARALLELISM
+import com.unlimitedcloud.settings.MIN_TRANSFER_PARALLELISM
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -85,6 +87,8 @@ data class ExplorerUiState(
     val gallerySyncedCount: Int = 0,
     val autoSaveSupported: Boolean = false,
     val autoSavePhotos: Boolean = false,
+    /** How many files a batch uploads or downloads at once (Settings). */
+    val parallelTransfers: Int = 3,
     /** True when the platform has a notification shade to post into. */
     val notificationsSupported: Boolean = false,
     /** False when notifications are blocked; Settings offers a shortcut to fix it. */
@@ -139,8 +143,8 @@ private fun CloudFile.inFolder(folder: String): Boolean {
 }
 
 /**
- * Drives the file list, history pagination, search, one transfer at a time and
- * the incremental gallery sync.
+ * Drives the file list, history pagination, search, the parallel transfer queue
+ * and the incremental folder sync.
  *
  * Kept as a plain class (not a platform ViewModel) so Android and Desktop share
  * the exact same behaviour; Koin keeps a single instance for the signed-in shell.
@@ -173,6 +177,7 @@ class CloudFilesViewModel(
             gallerySyncedCount = preferences.gallerySyncedKeys().size,
             autoSaveSupported = mediaSaver.supported,
             autoSavePhotos = preferences.autoSavePhotos(),
+            parallelTransfers = preferences.transferParallelism(),
             notificationsSupported = notifier.supported,
             notificationsEnabled = !notifier.supported || notifier.enabled,
         ),
@@ -323,6 +328,13 @@ class CloudFilesViewModel(
         state.update { it.copy(sort = sort) }
     }
 
+    /** Saves the parallel transfer count; running batches keep their worker count. */
+    fun setTransferParallelism(count: Int) {
+        val clamped = count.coerceIn(MIN_TRANSFER_PARALLELISM, MAX_TRANSFER_PARALLELISM)
+        preferences.setTransferParallelism(clamped)
+        state.update { it.copy(parallelTransfers = clamped) }
+    }
+
     fun dismissStatus() {
         state.update { it.copy(status = null) }
     }
@@ -351,9 +363,9 @@ class CloudFilesViewModel(
     }
 
     /**
-     * Uploads every picked file, one after another. A sequential run keeps the
-     * Transfer list readable and avoids a burst of parallel TDLib uploads on a
-     * mobile connection.
+     * Uploads every picked file through the shared worker pool. How many run at
+     * once is the user's setting, so a slow mobile connection can be told to
+     * move one file at a time.
      */
     fun uploadMany(paths: List<String>, folder: String?) {
         val unique = paths.distinct()
@@ -442,14 +454,14 @@ class CloudFilesViewModel(
             // counters and the one ongoing notification are guarded.
             val stats = Mutex()
 
-            // A batch no longer crawls one file at a time: a handful of parallel
-            // transfers keeps TDLib busy without flooding a mobile connection.
+            // A batch no longer crawls one file at a time: the configured number
+            // of workers keeps TDLib busy without flooding a mobile connection.
             coroutineScope {
                 val queue = Channel<UploadRequest>(capacity = requests.size)
                 requests.forEach { queue.send(it) }
                 queue.close()
 
-                repeat(minOf(MAX_PARALLEL_TRANSFERS, requests.size)) {
+                repeat(minOf(state.value.parallelTransfers, requests.size)) {
                     launch {
                         for (request in queue) {
                             val transferId = "transfer-${nextTransferId()}"
@@ -871,7 +883,7 @@ class CloudFilesViewModel(
                 files.forEach { queue.send(it) }
                 queue.close()
 
-                repeat(minOf(MAX_PARALLEL_TRANSFERS, files.size)) {
+                repeat(minOf(state.value.parallelTransfers, files.size)) {
                     launch {
                         for (file in queue) {
                             val id = "transfer-${nextTransferId()}"
@@ -984,6 +996,7 @@ class CloudFilesViewModel(
             galleryLastSync = preferences.galleryLastSync(),
             autoSaveSupported = mediaSaver.supported,
             autoSavePhotos = preferences.autoSavePhotos(),
+            parallelTransfers = preferences.transferParallelism(),
         )
     }
 
@@ -1054,7 +1067,7 @@ class CloudFilesViewModel(
      */
     fun syncGallery(auto: Boolean = false, perFolderLimit: Int = Int.MAX_VALUE) {
         if (!gallerySource.supported) {
-            if (!auto) reportError("Sinkron folder hanya tersedia di Android")
+            if (!auto) reportError("Sinkron folder tidak tersedia di perangkat ini")
             return
         }
         // The automatic entry point must respect the toggle; only the explicit
@@ -1148,7 +1161,7 @@ class CloudFilesViewModel(
                         }
                         queue.close()
 
-                        repeat(minOf(MAX_PARALLEL_TRANSFERS, batch.size)) {
+                        repeat(minOf(state.value.parallelTransfers, batch.size)) {
                             launch {
                                 for (file in queue) {
                                     val transferId = "transfer-${nextTransferId()}"
@@ -1390,10 +1403,6 @@ class CloudFilesViewModel(
         const val MAX_GALLERY_ATTEMPTS = 3
         const val MAX_COVER_CACHE_ENTRIES = 500
         const val MAX_PREVIEW_CACHE_ENTRIES = 12
-
-        /** Files transferred at once: enough to keep TDLib busy, not enough to
-         *  saturate a mobile connection or the user's patience. */
-        const val MAX_PARALLEL_TRANSFERS = 3
     }
 }
 

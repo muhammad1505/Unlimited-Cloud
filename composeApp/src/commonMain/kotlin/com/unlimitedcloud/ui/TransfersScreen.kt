@@ -94,11 +94,17 @@ fun TransfersScreen(
         } else {
             val listState = rememberLazyListState()
             // New transfers are prepended, so the top row is the one that just
-            // started. Without this the list stayed where the user left it and
-            // the newest progress was off-screen.
+            // started. Follow it only while the user is still near the top:
+            // yanking the list away from a row they deliberately scrolled to was
+            // worse than a missing jump.
             val newestId = state.transfers.firstOrNull()?.id
-            LaunchedEffect(newestId) {
-                if (newestId != null) listState.animateScrollToItem(0)
+            LaunchedEffect(newestId, listState) {
+                if (newestId == null) return@LaunchedEffect
+                val nearTop = listState.firstVisibleItemIndex <= 1 &&
+                    listState.firstVisibleItemScrollOffset < 240
+                val alreadyAtTop = listState.firstVisibleItemIndex == 0 &&
+                    listState.firstVisibleItemScrollOffset == 0
+                if (nearTop && !alreadyAtTop) listState.animateScrollToItem(0)
             }
 
             LazyColumn(

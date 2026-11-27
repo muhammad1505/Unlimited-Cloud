@@ -53,6 +53,8 @@ import com.unlimitedcloud.platform.BatteryOptimizationSnapshot
 import com.unlimitedcloud.platform.BatterySettingsDestination
 import com.unlimitedcloud.platform.rememberBatteryOptimizationController
 import com.unlimitedcloud.platform.rememberGalleryFolderPicker
+import com.unlimitedcloud.settings.MAX_TRANSFER_PARALLELISM
+import com.unlimitedcloud.settings.MIN_TRANSFER_PARALLELISM
 import com.unlimitedcloud.ui.components.ActionRow
 import com.unlimitedcloud.ui.components.AppAvatar
 import com.unlimitedcloud.ui.components.AppIcons
@@ -125,6 +127,11 @@ fun SettingsScreen(
             channelState = channelState,
             state = filesState,
             onRefresh = viewModel::refresh,
+        )
+
+        TransferCard(
+            state = filesState,
+            onParallelChange = viewModel::setTransferParallelism,
         )
 
         GalleryCard(
@@ -322,6 +329,48 @@ private fun StorageCard(
 }
 
 @Composable
+private fun TransferCard(
+    state: ExplorerUiState,
+    onParallelChange: (Int) -> Unit,
+) {
+    SurfaceCard(modifier = Modifier.fillMaxWidth()) {
+        SectionHeader(title = "Transfer")
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Berkas sekaligus",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            text = "Berapa berkas yang diunggah atau diunduh bersamaan. Angka kecil " +
+                "lebih hemat koneksi, angka besar lebih cepat untuk banyak berkas kecil. " +
+                "Transfer yang sedang berjalan memakai jumlah sebelumnya.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            for (count in MIN_TRANSFER_PARALLELISM..MAX_TRANSFER_PARALLELISM) {
+                FilterChip(
+                    selected = state.parallelTransfers == count,
+                    onClick = { onParallelChange(count) },
+                    label = { Text(count.toString()) },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.13f),
+                        selectedLabelColor = MaterialTheme.colorScheme.primary,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun GalleryCard(
     state: ExplorerUiState,
     onAddFolder: () -> Unit,
@@ -367,8 +416,8 @@ private fun GalleryCard(
             Spacer(Modifier.height(8.dp))
             InfoRow(
                 icon = AppIcons.Info,
-                title = "Khusus Android",
-                value = "Di desktop, unggah berkas lewat dialog berkas biasa.",
+                title = "Tidak tersedia",
+                value = "Perangkat ini tidak punya pemilih folder yang bisa dibaca.",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             return@SurfaceCard

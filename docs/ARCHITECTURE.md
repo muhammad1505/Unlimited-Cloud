@@ -140,6 +140,19 @@ bila izinnya diberikan, dan `FOREGROUND_SERVICE` bawaan WorkManager tetap dihapu
 dari manifest bersama receiver diagnostik/profile-installer yang membawa penanda
 `DUMP`.
 
+Desktop memakai kontrak `GallerySyncSource` yang sama: folder yang dipilih adalah
+direktori biasa, `id`-nya path absolut, kuncinya path absolut setiap berkas, dan
+berkas diunggah langsung dari tempatnya (tanpa salinan cache, jadi `release()`
+no-op). Pemindaian dibatasi 4.000 berkas dan 16 tingkat kedalaman per batch, sama
+seperti Android. `GalleryBackgroundSync` tetap `supported = false` di desktop karena
+tidak ada penjadwal sistem; sinkron otomatis berjalan saat aplikasi dibuka.
+
+Transfer berjalan lewat kumpulan worker (`Channel` + `coroutineScope`). Jumlahnya
+diambil dari `AppPreferences.transferParallelism()` (1–6, bawaan 3) dan dapat
+diubah di Pengaturan; batch yang sedang berjalan memakai jumlah saat batch dimulai.
+Di desktop, `TransferNotifier` diteruskan ke ikon tray: tooltip mengikuti batch yang
+berjalan dan hasilnya tampil sebagai balon notifikasi.
+
 `MediaSaver` menulis foto unduhan ke MediaStore dengan `IS_PENDING`: entri baru
 tampil di galeri setelah salinan selesai, dan entri dihapus bila penyalinan gagal.
 Di Android 9 ke bawah fitur disembunyikan karena MediaStore belum bisa dipakai

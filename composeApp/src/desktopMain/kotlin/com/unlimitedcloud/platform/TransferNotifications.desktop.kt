@@ -4,19 +4,26 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 
 /**
- * Desktop keeps process feedback inside the window: the shell already shows a
- * notification banner, and a tray/toast integration would need a dependency the
- * app does not otherwise use.
+ * Desktop reports transfers through the tray icon: the tooltip follows the
+ * running batch and a balloon message announces the result. The in-window banner
+ * stays the primary feedback; the tray is what the user sees after closing the
+ * window.
  */
-actual fun createTransferNotifier(): TransferNotifier = NoopTransferNotifier
+actual fun createTransferNotifier(): TransferNotifier = DesktopTransferNotifier
 
-private object NoopTransferNotifier : TransferNotifier {
-    override val supported: Boolean = false
-    override val enabled: Boolean = false
+private object DesktopTransferNotifier : TransferNotifier {
+    override val supported: Boolean get() = DesktopTray.supported
 
-    override fun notify(title: String, message: String) = Unit
-    override fun progress(title: String, message: String) = Unit
-    override fun clearProgress() = Unit
+    /** A tray icon has no permission gate: supported means it can post. */
+    override val enabled: Boolean get() = DesktopTray.supported
+
+    override fun notify(title: String, message: String) = DesktopTray.notify(title, message)
+
+    override fun progress(title: String, message: String) =
+        DesktopTray.showProgress(title, message)
+
+    override fun clearProgress() = DesktopTray.clearProgress()
+
     override fun openSettings(): Boolean = false
 }
 

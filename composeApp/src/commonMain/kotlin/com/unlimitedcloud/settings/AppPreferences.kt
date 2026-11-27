@@ -9,6 +9,11 @@ import okio.Path
 import okio.Path.Companion.toPath
 import okio.buffer
 
+/** Range the parallel transfer setting may take; the UI offers the same one. */
+const val MIN_TRANSFER_PARALLELISM = 1
+const val MAX_TRANSFER_PARALLELISM = 6
+const val DEFAULT_TRANSFER_PARALLELISM = 3
+
 /**
  * Tiny key/value store for local preferences and sync bookkeeping.
  *
@@ -223,6 +228,21 @@ class AppPreferences(
 
     fun setGalleryLastSync(label: String) = put(KEY_GALLERY_LAST_SYNC, label)
 
+    // --- Transfers -------------------------------------------------------------
+
+    /**
+     * How many files a batch moves at once. Clamped here as well as in the UI:
+     * a hand-edited settings file must not start fifty parallel uploads.
+     */
+    fun transferParallelism(): Int =
+        (get(KEY_TRANSFER_PARALLELISM)?.toIntOrNull() ?: DEFAULT_TRANSFER_PARALLELISM)
+            .coerceIn(MIN_TRANSFER_PARALLELISM, MAX_TRANSFER_PARALLELISM)
+
+    fun setTransferParallelism(count: Int) = put(
+        KEY_TRANSFER_PARALLELISM,
+        count.coerceIn(MIN_TRANSFER_PARALLELISM, MAX_TRANSFER_PARALLELISM).toString(),
+    )
+
     // --- Device gallery --------------------------------------------------------
 
     /** Copies downloaded photos into Pictures/Unlimited Cloud via MediaStore. */
@@ -335,5 +355,6 @@ class AppPreferences(
         const val KEY_GALLERY_FAILED_KEYS = "gallery.failedKeys"
         const val KEY_GALLERY_LAST_SYNC = "gallery.lastSync"
         const val KEY_AUTO_SAVE_PHOTOS = "gallery.autoSavePhotos"
+        const val KEY_TRANSFER_PARALLELISM = "transfer.parallelism"
     }
 }

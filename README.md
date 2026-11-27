@@ -16,9 +16,15 @@ Android dan Desktop memakai kode UI, domain, dan state management yang sama.
 - **Transfer berprogres** untuk unggahan dan unduhan, dengan riwayat selesai/gagal.
 - **Bagikan berkas** ke aplikasi lain: chooser Android lewat FileProvider, clipboard
   file-list di desktop.
-- **Sinkronisasi galeri otomatis** (Android): pilih satu folder lewat pemilih folder
-  sistem, foto baru diunggah ke folder `Galeri` — tanpa izin penyimpanan. Bisa
-  dijadwalkan lewat WorkManager saat aplikasi tertutup.
+- **Sinkronisasi folder otomatis** (Android & Desktop): pilih folder lewat pemilih
+  folder sistem, semua berkas baru diunggah ke folder `Galeri` dengan struktur
+  subfoldernya — tanpa izin penyimpanan di Android. Di Android bisa dijadwalkan
+  lewat WorkManager saat aplikasi tertutup; di desktop folder dibaca langsung dari
+  disk.
+- **Transfer paralel yang bisa diatur**: 1–6 berkas sekaligus, diatur di Pengaturan.
+- **Ikon tray desktop**: menutup jendela hanya menyembunyikannya, menu tray bisa
+  membuka aplikasi lagi atau keluar, dan progres serta hasil transfer muncul di
+  tooltip dan balon notifikasi tray.
 - **Simpan foto ke galeri perangkat** (Android 10+): foto yang diunduh disalin ke
   `Pictures/Unlimited Cloud` lewat MediaStore, juga tanpa izin penyimpanan.
 - **Panduan optimasi baterai** yang mengikuti kebijakan Google Play/OEM: membuka
@@ -194,9 +200,11 @@ python3 scripts/check-versions.py
 
 - Unggahan besar tetap bergantung pada koneksi dan kebijakan baterai perangkat;
   panduan baterai membantu, tetapi tidak menjamin proses latar belakang.
-- Sinkronisasi galeri mengunggah semua foto baru saat aplikasi dibuka. Worker
-  WorkManager memproses 8 foto per folder tiap putaran agar muat batas waktu
+- Sinkronisasi folder mengunggah semua berkas baru saat aplikasi dibuka. Worker
+  WorkManager memproses 8 berkas per folder tiap putaran agar muat batas waktu
   sistem, dan jadwalnya tetap bergantung pada kebijakan baterai perangkat.
-- Folder galeri di desktop tidak tersedia; gunakan dialog berkas biasa.
+- Ikon tray membutuhkan sesi desktop yang menyediakan system tray; di sesi tanpa
+  tray (misalnya GNOME Wayland) menutup jendela langsung keluar dari aplikasi.
+  Balon notifikasi tray juga bergantung pada dukungan sistem operasi.
 - Aplikasi belum menyertakan pengujian otomatis; verifikasi utama ada di CI
   (kompilasi, preflight, konsistensi versi, dan build release bertanda tangan).
