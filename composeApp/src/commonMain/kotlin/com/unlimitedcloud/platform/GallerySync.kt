@@ -24,6 +24,12 @@ data class GalleryFile(
      * every file into one topic.
      */
     val relativeDirectory: String = "",
+    /**
+     * SAF document of the original file. Kept so the original can be moved to
+     * the provider's trash once the upload succeeded; null on desktop, which
+     * addresses the file by its path.
+     */
+    val documentUri: String? = null,
 )
 
 /**

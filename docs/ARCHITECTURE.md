@@ -146,6 +146,16 @@ tiga direktori cache unggahan (`uploads`, `gallery-sync`, `group-photo`) dan
 tidak menyentuh direktori TDLib, jadi membersihkan cache tidak pernah merusak
 sesi Telegram.
 
+Opsi hapus berkas asli berlaku dua-duanya: folder yang diunggah manual dan folder
+sinkron galeri (termasuk sync WorkManager, yang memanggil jalur yang sama di
+ViewModel). Folder sinkron meminta izin baca+tulis; penyedia yang menolak akses
+tulis tetap dipakai dengan izin baca saja, dan penghapusan berkasnya dilaporkan
+gagal alih-alih dipaksa.
+
+`storageUsage()` melaporkan pemakaian disk per direktori (basis data TDLib,
+berkas TDLib, salinan unggahan). Angka ini hanya informasi: Settings tidak
+menghapus direktori TDLib karena sedang dipakai selama sesi berjalan.
+
 ## Navigasi
 
 `SignedInScreen` memodelkan semua halaman sebagai `AppDestination`:

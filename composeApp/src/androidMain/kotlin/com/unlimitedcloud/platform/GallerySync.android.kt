@@ -89,6 +89,9 @@ private class AndroidGallerySyncSource(
                     localPath = copy.absolutePath,
                     sizeBytes = document.size,
                     relativeDirectory = document.relativeDirectory,
+                    documentUri = DocumentsContract
+                        .buildDocumentUriUsingTree(treeUri, document.documentId)
+                        .toString(),
                 )
             }
             .toList()
@@ -249,11 +252,21 @@ actual fun rememberGalleryFolderPicker(onPicked: (GalleryFolder?) -> Unit): () -
             result(null)
             return@rememberLauncherForActivityResult
         }
-        runCatching {
+        // Write access lets a synced original move to the provider's trash once
+        // it is uploaded; a provider that refuses it still keeps the read grant.
+        val writeGranted = runCatching {
             context.contentResolver.takePersistableUriPermission(
                 uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
             )
+        }.isSuccess
+        if (!writeGranted) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
         }
         result(
             GalleryFolder(

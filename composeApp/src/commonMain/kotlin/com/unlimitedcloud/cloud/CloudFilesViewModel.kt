@@ -17,9 +17,10 @@ import com.unlimitedcloud.platform.createTransferNotifier
 import com.unlimitedcloud.platform.createUploadThumbnail
 import com.unlimitedcloud.platform.deleteSourceFile
 import com.unlimitedcloud.platform.pickedFilesAreAppCopies
+import com.unlimitedcloud.platform.StorageUsage
 import com.unlimitedcloud.platform.sourceFileDeletionSupported
+import com.unlimitedcloud.platform.storageUsage
 import com.unlimitedcloud.platform.uploadCacheSupported
-import com.unlimitedcloud.platform.uploadCacheUsage
 import com.unlimitedcloud.settings.AppPreferences
 import com.unlimitedcloud.settings.MAX_TRANSFER_PARALLELISM
 import com.unlimitedcloud.settings.MIN_TRANSFER_PARALLELISM
@@ -112,6 +113,8 @@ data class ExplorerUiState(
     val cacheSupported: Boolean = false,
     /** Size of the upload cache in bytes; null until measured. */
     val cacheBytes: Long? = null,
+    /** Disk usage of the app's own directories; null until measured. */
+    val storageUsage: StorageUsage? = null,
     /** True while the cache is being emptied, so the button cannot be tapped twice. */
     val cacheClearing: Boolean = false,
     /** True while an old-file tidy pass runs; Settings disables its button. */
@@ -410,14 +413,18 @@ class CloudFilesViewModel(
         state.update { it.copy(deleteOriginals = enabled) }
     }
 
-    /** Measures the upload cache so Settings can show how much it holds. */
+    /**
+     * Measures the app's directories so Settings can show where the space went
+     * and how much the upload cache holds.
+     */
     fun refreshCacheUsage() {
-        if (!state.value.cacheSupported) return
         scope.launch {
-            val bytes = withContext(Dispatchers.IO) {
-                runCatching { uploadCacheUsage().bytes }.getOrDefault(0L)
+            val usage = withContext(Dispatchers.IO) {
+                runCatching { storageUsage() }.getOrNull()
+            } ?: return@launch
+            state.update {
+                it.copy(storageUsage = usage, cacheBytes = usage.uploadCacheBytes)
             }
-            state.update { it.copy(cacheBytes = bytes) }
         }
     }
 
@@ -436,14 +443,15 @@ class CloudFilesViewModel(
             val freed = withContext(Dispatchers.IO) {
                 runCatching { clearUploadCache() }.getOrDefault(0L)
             }
-            val remaining = withContext(Dispatchers.IO) {
-                runCatching { uploadCacheUsage().bytes }.getOrDefault(0L)
+            val usage = withContext(Dispatchers.IO) {
+                runCatching { storageUsage() }.getOrNull()
             }
             logDiagnostic(LOG_TAG, "cache unggahan dibersihkan: ${formatBytes(freed)}")
             state.update {
                 it.copy(
                     cacheClearing = false,
-                    cacheBytes = remaining,
+                    cacheBytes = usage?.uploadCacheBytes ?: 0L,
+                    storageUsage = usage ?: it.storageUsage,
                     status = if (freed > 0L) {
                         "${formatBytes(freed)} cache unggahan dibersihkan"
                     } else {
@@ -975,7 +983,7 @@ class CloudFilesViewModel(
                     "berkas asli: $originalsDeleted dipindah, $originalsFailed gagal",
                 )
             }
-            if (state.value.cacheSupported) refreshCacheUsage()
+            refreshCacheUsage()
             if (freedBytes > 0L) {
                 logDiagnostic(LOG_TAG, "cache dibersihkan: ${formatBytes(freedBytes)}")
             }
@@ -1082,6 +1090,13 @@ class CloudFilesViewModel(
     private suspend fun deleteOriginal(request: UploadRequest): Boolean =
         withContext(Dispatchers.IO) {
             runCatching { deleteSourceFile(request.localPath, request.documentUri) }
+                .getOrDefault(false)
+        }
+
+    /** Removes one synced original through the platform's recoverable route. */
+    private suspend fun deleteGalleryOriginal(file: GalleryFile): Boolean =
+        withContext(Dispatchers.IO) {
+            runCatching { deleteSourceFile(file.localPath, file.documentUri) }
                 .getOrDefault(false)
         }
 
@@ -1619,6 +1634,10 @@ class CloudFilesViewModel(
             // Documents the source could not prepare (unreadable, or too big for
             // the batch's cache budget). They are reported instead of vanishing.
             var skipped = 0
+            // Originals moved to trash after their upload succeeded; only when
+            // the user turned the option on.
+            var originalsDeleted = 0
+            var originalsFailed = 0
 
             // Every selected folder contributes its own incremental batch, so a
             // second folder does not wait for the first one to be exhausted.
@@ -1720,6 +1739,14 @@ class CloudFilesViewModel(
                                         folder = target,
                                     )
                                     gallerySource.release(listOf(file))
+                                    // The original only moves once Telegram has the
+                                    // file, and only through the recoverable route.
+                                    if (result.isSuccess && state.value.deleteOriginals) {
+                                        val gone = deleteGalleryOriginal(file)
+                                        keyLock.withLock {
+                                            if (gone) originalsDeleted++ else originalsFailed++
+                                        }
+                                    }
 
                                     result.fold(
                                         onSuccess = {
@@ -1765,10 +1792,17 @@ class CloudFilesViewModel(
 
             notifier.clearProgress()
             val skippedNote = if (skipped > 0) " · $skipped berkas dilewati" else ""
+            val originalsNote = when {
+                originalsDeleted > 0 && originalsFailed > 0 ->
+                    " · $originalsDeleted berkas asli dipindah ke Sampah, $originalsFailed gagal"
+                originalsDeleted > 0 -> " · $originalsDeleted berkas asli dipindah ke Sampah"
+                originalsFailed > 0 -> " · $originalsFailed berkas asli tidak bisa dipindah"
+                else -> ""
+            }
             if (uploaded > 0) {
                 notifyTransfer(
                     "Sinkron folder selesai",
-                    "$uploaded berkas tersimpan di folder Galeri$skippedNote",
+                    "$uploaded berkas tersimpan di folder Galeri$skippedNote$originalsNote",
                 )
             } else if (failed > 0) {
                 notifyTransfer(
@@ -1787,7 +1821,7 @@ class CloudFilesViewModel(
                     galleryLastSync = stamp,
                     gallerySyncedCount = preferences.gallerySyncedKeys().size,
                     status = when {
-                        uploaded > 0 -> "$uploaded berkas disinkronkan$skippedNote"
+                        uploaded > 0 -> "$uploaded berkas disinkronkan$skippedNote$originalsNote"
                         failed == 0 && skipped > 0 ->
                             "$skipped berkas dilewati: tidak bisa dibaca atau tidak muat di cache"
                         failed == 0 -> "Folder sudah sinkron"

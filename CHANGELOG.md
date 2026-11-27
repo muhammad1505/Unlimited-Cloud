@@ -21,6 +21,17 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.4.5 — 27 November 2026
+
+### Baru
+
+- Pengaturan → Transfer kini menampilkan rincian pemakaian ruang: basis data Telegram, berkas Telegram (unduhan dan thumbnail), salinan unggahan sementara, serta totalnya.
+- Opsi "Hapus berkas asli setelah terunggah" kini juga berlaku untuk folder sinkron galeri, termasuk sinkronisasi latar. Izin folder sinkron diminta dengan akses tulis supaya berkas bisa dipindah ke Sampah; bila penyedia menolak, izin baca tetap dipakai seperti sebelumnya.
+
+### Perbaikan
+
+- Status dan notifikasi sinkron folder menyebut berapa berkas asli yang dipindah ke Sampah dan berapa yang gagal, sama seperti unggahan manual.
+
 ## 1.4.4 — 27 November 2026
 
 ### Baru

@@ -276,13 +276,14 @@ fun SettingsScreen(
     if (confirmDeleteOriginals) {
         ConfirmDialog(
             title = "Hapus berkas asli setelah unggah?",
-            message = if (pickedFilesAreAppCopies) {
-                "Setiap berkas yang berhasil diunggah dipindahkan dari penyimpanan " +
-                    "ponsel ke Sampah lewat izin folder yang kamu berikan, jadi masih " +
-                    "bisa dipulihkan dari pengelola berkas. Hanya berlaku untuk folder " +
-                    "yang dipilih lewat pemilih folder: berkas yang dipilih satu per " +
-                    "satu tidak bisa dihapus karena izinnya sekali pakai. Pastikan " +
-                    "kamu punya cadangan lain kalau tidak yakin."
+                            message = if (pickedFilesAreAppCopies) {
+                    "Setiap berkas yang berhasil diunggah dipindahkan dari penyimpanan " +
+                        "ponsel ke Sampah lewat izin folder yang kamu berikan, jadi masih " +
+                        "bisa dipulihkan dari pengelola berkas bila penyedianya mendukung. " +
+                        "Berlaku untuk folder yang dipilih lewat pemilih folder dan folder " +
+                        "sinkron galeri; berkas yang dipilih satu per satu tidak bisa " +
+                        "dihapus karena izinnya sekali pakai. Pastikan kamu punya cadangan " +
+                        "lain kalau tidak yakin."
             } else {
                 "Setiap berkas yang berhasil diunggah dipindahkan ke Sampah sistem, " +
                     "jadi masih bisa dipulihkan dari sana. Aktifkan hanya kalau folder " +
@@ -692,14 +693,30 @@ private fun TransferCard(
                 }
             }
         }
+        state.storageUsage?.let { usage ->
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
+            Spacer(Modifier.height(6.dp))
+            StorageLine("Basis data Telegram", usage.tdlibDatabaseBytes)
+            StorageLine("Berkas Telegram (unduhan & thumbnail)", usage.tdlibFilesBytes)
+            StorageLine("Total dipakai aplikasi", usage.totalBytes, emphasized = true)
+            Text(
+                text = "Basis data dan berkas Telegram dipakai TDLib selama aplikasi " +
+                    "berjalan, jadi tidak dihapus dari sini.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         if (state.originalsDeletionSupported) {
             ToggleRow(
                 title = "Hapus berkas asli setelah terunggah",
                 description = if (pickedFilesAreAppCopies) {
                     "Berkas asli dipindah ke Sampah setelah unggahan berhasil, jadi ponsel " +
                         "tetap lega dan berkasnya masih bisa dipulihkan. Berlaku untuk folder " +
-                        "yang dipilih lewat pemilih folder; pemilihan berkas satu per satu " +
-                        "tidak termasuk."
+                        "yang dipilih lewat pemilih folder dan folder sinkron galeri; " +
+                        "pemilihan berkas satu per satu tidak termasuk."
                 } else {
                     "Berkas asli dipindah ke Sampah sistem setelah unggahan berhasil, jadi " +
                         "masih bisa dipulihkan dari sana."
@@ -1040,6 +1057,28 @@ private fun AboutCard(
                 Text("Buka pengaturan notifikasi")
             }
         }
+    }
+}
+
+@Composable
+private fun StorageLine(label: String, bytes: Long, emphasized: Boolean = false) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = formatBytes(bytes),
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = if (emphasized) FontWeight.SemiBold else null,
+        )
     }
 }
 
