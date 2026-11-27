@@ -12,9 +12,14 @@ import com.unlimitedcloud.platform.LocalFolderSelection
 import com.unlimitedcloud.platform.MediaSaver
 import com.unlimitedcloud.platform.TransferNotifier
 import com.unlimitedcloud.platform.synchronizedBlock
+import com.unlimitedcloud.platform.clearUploadCache
 import com.unlimitedcloud.platform.createTransferNotifier
 import com.unlimitedcloud.platform.createUploadThumbnail
+import com.unlimitedcloud.platform.deleteSourceFile
 import com.unlimitedcloud.platform.pickedFilesAreAppCopies
+import com.unlimitedcloud.platform.sourceFileDeletionSupported
+import com.unlimitedcloud.platform.uploadCacheSupported
+import com.unlimitedcloud.platform.uploadCacheUsage
 import com.unlimitedcloud.settings.AppPreferences
 import com.unlimitedcloud.settings.MAX_TRANSFER_PARALLELISM
 import com.unlimitedcloud.settings.MIN_TRANSFER_PARALLELISM
@@ -99,6 +104,16 @@ data class ExplorerUiState(
      * the file. The original file is never the one removed.
      */
     val deleteUploadedCopies: Boolean = true,
+    /** Whether the user's own file is moved to trash after a confirmed upload. */
+    val deleteOriginals: Boolean = false,
+    /** True when this platform can remove an uploaded original recoverably. */
+    val originalsDeletionSupported: Boolean = false,
+    /** Whether this platform keeps upload copies that can be measured and cleared. */
+    val cacheSupported: Boolean = false,
+    /** Size of the upload cache in bytes; null until measured. */
+    val cacheBytes: Long? = null,
+    /** True while the cache is being emptied, so the button cannot be tapped twice. */
+    val cacheClearing: Boolean = false,
     /** True while an old-file tidy pass runs; Settings disables its button. */
     val tidying: Boolean = false,
     /** Custom name of the storage group; null while it keeps the default one. */
@@ -204,6 +219,9 @@ class CloudFilesViewModel(
             parallelTransfers = preferences.transferParallelism(),
             autoTopics = preferences.autoTopics(),
             deleteUploadedCopies = preferences.deleteUploadedCopies(),
+            deleteOriginals = preferences.deleteUploadedOriginals(),
+            originalsDeletionSupported = sourceFileDeletionSupported,
+            cacheSupported = uploadCacheSupported,
             storageTitle = preferences.cloudRootTitle(),
             storageMuted = preferences.cloudRootMuted(),
             storageArchived = preferences.cloudRootArchived(),
@@ -215,6 +233,7 @@ class CloudFilesViewModel(
 
     init {
         refreshBackgroundSchedule()
+        refreshCacheUsage()
     }
 
     private var transferCounter = 0L
@@ -380,6 +399,60 @@ class CloudFilesViewModel(
     fun setDeleteUploadedCopies(enabled: Boolean) {
         preferences.setDeleteUploadedCopies(enabled)
         state.update { it.copy(deleteUploadedCopies = enabled) }
+    }
+
+    /**
+     * Turns removal of the original on or off. Only files the app can address
+     * afterwards are affected, and Settings asks for confirmation first.
+     */
+    fun setDeleteUploadedOriginals(enabled: Boolean) {
+        preferences.setDeleteUploadedOriginals(enabled)
+        state.update { it.copy(deleteOriginals = enabled) }
+    }
+
+    /** Measures the upload cache so Settings can show how much it holds. */
+    fun refreshCacheUsage() {
+        if (!state.value.cacheSupported) return
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching { uploadCacheUsage().bytes }.getOrDefault(0L)
+            }
+            state.update { it.copy(cacheBytes = bytes) }
+        }
+    }
+
+    /**
+     * Empties the temporary upload copies. Refused while a transfer runs: the
+     * copies in the cache are exactly what the running upload reads from.
+     */
+    fun clearUploadCacheNow() {
+        if (!state.value.cacheSupported || state.value.cacheClearing) return
+        if (state.value.activeTransfers.isNotEmpty() || state.value.gallerySyncing) {
+            reportError("Tunggu transfer selesai sebelum membersihkan cache")
+            return
+        }
+        scope.launch {
+            state.update { it.copy(cacheClearing = true) }
+            val freed = withContext(Dispatchers.IO) {
+                runCatching { clearUploadCache() }.getOrDefault(0L)
+            }
+            val remaining = withContext(Dispatchers.IO) {
+                runCatching { uploadCacheUsage().bytes }.getOrDefault(0L)
+            }
+            logDiagnostic(LOG_TAG, "cache unggahan dibersihkan: ${formatBytes(freed)}")
+            state.update {
+                it.copy(
+                    cacheClearing = false,
+                    cacheBytes = remaining,
+                    status = if (freed > 0L) {
+                        "${formatBytes(freed)} cache unggahan dibersihkan"
+                    } else {
+                        "Cache unggahan sudah kosong"
+                    },
+                    error = null,
+                )
+            }
+        }
     }
 
     /**
@@ -683,11 +756,29 @@ class CloudFilesViewModel(
         }
     }
 
-    /** One file waiting its turn, with the folder it will land in. */
-    private data class UploadRequest(val localPath: String, val folder: String?)
+    /**
+     * One file waiting its turn, with the folder it will land in and, when the
+     * file came from a folder whose grant outlives the picker, the document the
+     * original can be removed through afterwards.
+     */
+    private data class UploadRequest(
+        val localPath: String,
+        val folder: String?,
+        val documentUri: String? = null,
+    ) {
+        /**
+         * Whether the original can still be addressed after the picker closed:
+         * Android needs the document uri of a granted folder, desktop always has
+         * the file's own path.
+         */
+        val canDeleteSource: Boolean
+            get() = if (pickedFilesAreAppCopies) documentUri != null else true
+    }
 
     fun upload(localPath: String, folder: String?) {
         startUploads(
+            // A file chosen one by one only has a one-shot read grant, so its
+            // original cannot be addressed later; nothing to pass here.
             requests = listOf(UploadRequest(localPath, folderFor(folder, localPath))),
             summary = null,
         )
@@ -736,6 +827,7 @@ class CloudFilesViewModel(
                 UploadRequest(
                     localPath = file.localPath,
                     folder = if (relativeDirectory.isEmpty()) base else "$base/$relativeDirectory",
+                    documentUri = file.documentUri,
                 )
             },
             summary = "${selection.files.size} berkas dari ${selection.name}",
@@ -782,6 +874,9 @@ class CloudFilesViewModel(
             var failed = 0
             var finished = 0
             var freedBytes = 0L
+            var originalsDeleted = 0
+            var originalsFailed = 0
+            val deleteOriginals = state.value.deleteOriginals
             // Read once per batch: switching the setting off while an upload
             // runs must not start deleting copies the user wants to keep.
             val deleteCopies = state.value.deleteUploadedCopies
@@ -823,10 +918,17 @@ class CloudFilesViewModel(
                             } else {
                                 0L
                             }
+                            // The user's own file only goes away once Telegram has
+                            // it, and only through the platform's recoverable route.
+                            val originalGone = result.isSuccess && deleteOriginals &&
+                                request.canDeleteSource && deleteOriginal(request)
                             val message = stats.withLock {
                                 finished++
                                 if (result.isSuccess) uploaded++ else failed++
                                 freedBytes += freed
+                                if (result.isSuccess && deleteOriginals && request.canDeleteSource) {
+                                    if (originalGone) originalsDeleted++ else originalsFailed++
+                                }
                                 "$finished/${requests.size} selesai · $uploaded berhasil" +
                                     (if (failed > 0) ", $failed gagal" else "")
                             }
@@ -859,7 +961,21 @@ class CloudFilesViewModel(
             val freedNote = freedBytes
                 .takeIf { it > 0L }
                 ?.let { "cache ${formatBytes(it)} dibersihkan" }
-            val extras = listOfNotNull(note, freedNote).joinToString(" · ")
+            val originalsNote = when {
+                originalsDeleted > 0 && originalsFailed > 0 ->
+                    "$originalsDeleted berkas asli dipindah ke Sampah, $originalsFailed gagal"
+                originalsDeleted > 0 -> "$originalsDeleted berkas asli dipindah ke Sampah"
+                originalsFailed > 0 -> "$originalsFailed berkas asli tidak bisa dipindah"
+                else -> null
+            }
+            val extras = listOfNotNull(note, freedNote, originalsNote).joinToString(" · ")
+            if (originalsDeleted > 0 || originalsFailed > 0) {
+                logDiagnostic(
+                    LOG_TAG,
+                    "berkas asli: $originalsDeleted dipindah, $originalsFailed gagal",
+                )
+            }
+            if (state.value.cacheSupported) refreshCacheUsage()
             if (freedBytes > 0L) {
                 logDiagnostic(LOG_TAG, "cache dibersihkan: ${formatBytes(freedBytes)}")
             }
@@ -958,6 +1074,16 @@ class CloudFilesViewModel(
             size
         }.getOrDefault(0L)
     }
+
+    /**
+     * Removes one original through the platform's recoverable route. Blocking
+     * provider and trash calls stay off the UI thread.
+     */
+    private suspend fun deleteOriginal(request: UploadRequest): Boolean =
+        withContext(Dispatchers.IO) {
+            runCatching { deleteSourceFile(request.localPath, request.documentUri) }
+                .getOrDefault(false)
+        }
 
     /** Local copies handed out for previews, so reopening a file is instant. */
     private val previewPaths = mutableMapOf<Long, String>()
@@ -1373,6 +1499,9 @@ class CloudFilesViewModel(
             parallelTransfers = preferences.transferParallelism(),
             autoTopics = preferences.autoTopics(),
             deleteUploadedCopies = preferences.deleteUploadedCopies(),
+            deleteOriginals = preferences.deleteUploadedOriginals(),
+            originalsDeletionSupported = sourceFileDeletionSupported,
+            cacheSupported = uploadCacheSupported,
             storageTitle = preferences.cloudRootTitle(),
             storageMuted = preferences.cloudRootMuted(),
             storageArchived = preferences.cloudRootArchived(),

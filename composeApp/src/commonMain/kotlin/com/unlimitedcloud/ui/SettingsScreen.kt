@@ -99,6 +99,7 @@ fun SettingsScreen(
     var showResetGallery by remember { mutableStateOf(false) }
     var showRenameStorage by remember { mutableStateOf(false) }
     var batteryFeedback by remember { mutableStateOf<String?>(null) }
+    var confirmDeleteOriginals by remember { mutableStateOf(false) }
     val logEntries by LogStore.entries.collectAsState()
 
     val batteryController = rememberBatteryOptimizationController()
@@ -123,6 +124,7 @@ fun SettingsScreen(
     // The user may have blocked notifications since the last visit; the card
     // below then offers the system settings shortcut.
     LaunchedEffect(Unit) { viewModel.refreshNotificationState() }
+    LaunchedEffect(Unit) { viewModel.refreshCacheUsage() }
 
     Column(
         modifier = modifier
@@ -165,6 +167,11 @@ fun SettingsScreen(
             state = filesState,
             onParallelChange = viewModel::setTransferParallelism,
             onDeleteCopiesChange = viewModel::setDeleteUploadedCopies,
+            onDeleteOriginalsChange = { enabled ->
+                // Removing a file from where the user put it is confirmed first.
+                if (enabled) confirmDeleteOriginals = true else viewModel.setDeleteUploadedOriginals(false)
+            },
+            onClearCache = viewModel::clearUploadCacheNow,
         )
 
         GalleryCard(
@@ -263,6 +270,31 @@ fun SettingsScreen(
                 viewModel.resetStorageName()
             },
             onDismiss = { showRenameStorage = false },
+        )
+    }
+
+    if (confirmDeleteOriginals) {
+        ConfirmDialog(
+            title = "Hapus berkas asli setelah unggah?",
+            message = if (pickedFilesAreAppCopies) {
+                "Setiap berkas yang berhasil diunggah dipindahkan dari penyimpanan " +
+                    "ponsel ke Sampah lewat izin folder yang kamu berikan, jadi masih " +
+                    "bisa dipulihkan dari pengelola berkas. Hanya berlaku untuk folder " +
+                    "yang dipilih lewat pemilih folder: berkas yang dipilih satu per " +
+                    "satu tidak bisa dihapus karena izinnya sekali pakai. Pastikan " +
+                    "kamu punya cadangan lain kalau tidak yakin."
+            } else {
+                "Setiap berkas yang berhasil diunggah dipindahkan ke Sampah sistem, " +
+                    "jadi masih bisa dipulihkan dari sana. Aktifkan hanya kalau folder " +
+                    "ini memang sudah dicadangkan di Telegram."
+            },
+            confirmLabel = "Aktifkan",
+            onConfirm = {
+                confirmDeleteOriginals = false
+                viewModel.setDeleteUploadedOriginals(true)
+            },
+            onDismiss = { confirmDeleteOriginals = false },
+            destructive = true,
         )
     }
 
@@ -572,6 +604,8 @@ private fun TransferCard(
     state: ExplorerUiState,
     onParallelChange: (Int) -> Unit,
     onDeleteCopiesChange: (Boolean) -> Unit,
+    onDeleteOriginalsChange: (Boolean) -> Unit,
+    onClearCache: () -> Unit,
 ) {
     SurfaceCard(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(title = "Transfer")
@@ -623,6 +657,57 @@ private fun TransferCard(
             onCheckedChange = onDeleteCopiesChange,
             enabled = pickedFilesAreAppCopies,
         )
+        if (state.cacheSupported) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Cache unggahan", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = when {
+                            state.cacheClearing -> "Membersihkan…"
+                            state.cacheBytes == null -> "Menghitung…"
+                            (state.cacheBytes ?: 0L) == 0L ->
+                                "Kosong. Salinan sementara langsung dihapus setelah unggahan " +
+                                    "berhasil."
+                            else -> "${formatBytes(state.cacheBytes ?: 0L)} salinan sementara. " +
+                                "Bisa dibersihkan sekarang tanpa menunggu unggahan berikutnya."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(
+                    onClick = onClearCache,
+                    enabled = !state.cacheClearing &&
+                        (state.cacheBytes ?: 0L) > 0L &&
+                        state.activeTransfers.isEmpty() &&
+                        !state.gallerySyncing,
+                ) {
+                    Text("Bersihkan")
+                }
+            }
+        }
+        if (state.originalsDeletionSupported) {
+            ToggleRow(
+                title = "Hapus berkas asli setelah terunggah",
+                description = if (pickedFilesAreAppCopies) {
+                    "Berkas asli dipindah ke Sampah setelah unggahan berhasil, jadi ponsel " +
+                        "tetap lega dan berkasnya masih bisa dipulihkan. Berlaku untuk folder " +
+                        "yang dipilih lewat pemilih folder; pemilihan berkas satu per satu " +
+                        "tidak termasuk."
+                } else {
+                    "Berkas asli dipindah ke Sampah sistem setelah unggahan berhasil, jadi " +
+                        "masih bisa dipulihkan dari sana."
+                },
+                checked = state.deleteOriginals,
+                onCheckedChange = onDeleteOriginalsChange,
+            )
+        }
     }
 }
 

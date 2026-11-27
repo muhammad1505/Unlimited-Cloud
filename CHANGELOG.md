@@ -21,6 +21,18 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.4.4 — 27 November 2026
+
+### Baru
+
+- Pengaturan → Transfer kini menampilkan ukuran cache unggahan beserta tombol "Bersihkan" untuk mengosongkannya kapan saja. Tombol dinonaktifkan selama transfer berjalan supaya berkas yang sedang diunggah tidak ikut terhapus.
+- Opsi baru "Hapus berkas asli setelah terunggah" dengan konfirmasi terlebih dahulu. Berkas tidak pernah dihapus permanen: di Android dipindahkan lewat penyedia penyimpanan (masuk Sampah bila didukung), di desktop dipindahkan ke Sampah sistem. Hanya berlaku untuk folder yang dipilih lewat pemilih folder, karena berkas yang dipilih satu per satu izinnya sekali pakai.
+- Status dan notifikasi unggahan menyebut berapa berkas asli yang dipindah ke Sampah dan berapa yang gagal.
+
+### Perbaikan
+
+- Izin folder yang dipilih kini disimpan dengan akses tulis, sehingga berkas aslinya bisa dipindah ke Sampah setelah unggahan berhasil. Bila penyedia menolak akses tulis, izin baca tetap dipakai seperti sebelumnya.
+
 ## 1.4.3 — 27 November 2026
 
 ### Baru

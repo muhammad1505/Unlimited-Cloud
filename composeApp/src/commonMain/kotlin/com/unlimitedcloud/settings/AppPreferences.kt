@@ -334,6 +334,17 @@ class AppPreferences(
     fun setDeleteUploadedCopies(enabled: Boolean) =
         put(KEY_DELETE_UPLOADED_COPIES, enabled.toString())
 
+    /**
+     * Whether the user's own file is removed after a confirmed upload. Off by
+     * default: this is the only setting that can take a file away from where the
+     * user put it. Removal always goes through a recoverable route (trash), never
+     * a permanent unlink.
+     */
+    fun deleteUploadedOriginals(): Boolean = get(KEY_DELETE_ORIGINALS) == "true"
+
+    fun setDeleteUploadedOriginals(enabled: Boolean) =
+        put(KEY_DELETE_ORIGINALS, enabled.toString())
+
     // --- Device gallery --------------------------------------------------------
 
     /** Copies downloaded photos into Pictures/Unlimited Cloud via MediaStore. */
@@ -455,5 +466,6 @@ class AppPreferences(
         const val KEY_AUTO_SAVE_PHOTOS = "gallery.autoSavePhotos"
         const val KEY_TRANSFER_PARALLELISM = "transfer.parallelism"
         const val KEY_DELETE_UPLOADED_COPIES = "cloud.deleteUploadedCopies"
+        const val KEY_DELETE_ORIGINALS = "cloud.deleteOriginals"
     }
 }

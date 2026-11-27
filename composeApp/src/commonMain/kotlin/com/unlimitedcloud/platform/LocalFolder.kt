@@ -8,6 +8,12 @@ data class LocalFolderFile(
     val relativePath: String,
     /** Where the copy sits locally, already readable by TDLib. */
     val localPath: String,
+    /**
+     * Storage Access Framework document of the original file. Kept so the
+     * original can be removed, through the provider's trash, once the upload
+     * succeeded. Null on desktop, which addresses the file by its path.
+     */
+    val documentUri: String? = null,
 )
 
 /** Files copied out of a folder the user picked, ready for TDLib to upload. */

@@ -1,6 +1,7 @@
 package com.unlimitedcloud.platform
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -29,6 +30,23 @@ actual fun rememberLocalFolderPicker(onPicked: (LocalFolderSelection?) -> Unit):
         if (uri == null) {
             result(null)
             return@rememberLauncherForActivityResult
+        }
+        // The grant is kept for the session so the originals of uploaded files
+        // can later be moved to trash; write access is needed for that, and a
+        // provider that refuses it still leaves the read grant working.
+        val writeGranted = runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }.isSuccess
+        if (!writeGranted) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
         }
         // Copying a whole tree takes long enough that doing it on the main
         // thread froze the UI (and could trip an ANR).
@@ -207,6 +225,9 @@ private class FolderScan(
                                 "$relativeDirectory/${target.name}"
                             },
                             localPath = target.absolutePath,
+                            documentUri = DocumentsContract
+                                .buildDocumentUriUsingTree(treeUri, documentId)
+                                .toString(),
                         )
                         bytes += target.length()
                     } else {

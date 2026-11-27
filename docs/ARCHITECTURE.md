@@ -126,6 +126,7 @@ bila berkas utama terpotong. Isinya:
 | `cloud.looseFilesTidied` | penanda sapuan penuh berkas lama sudah dijalankan |
 | `cloud.tidyPending` | id pesan lama yang gagal dirapikan, dicoba lagi nanti |
 | `cloud.deleteUploadedCopies` | hapus salinan cache setelah unggahan berhasil (bawaan aktif; hanya menyentuh salinan milik aplikasi) |
+| `cloud.deleteOriginals` | pindahkan berkas asli ke Sampah setelah unggahan berhasil (bawaan mati; hanya untuk berkas yang izinnya masih berlaku) |
 | `changelog.lastSeenVersionCode` | gate pop-up pembaruan |
 | `gallery.autoSync` | switch sinkronisasi otomatis |
 | `gallery.folderId` / `gallery.folderName` | folder SAF yang dipilih |
@@ -134,6 +135,16 @@ bila berkas utama terpotong. Isinya:
 | `gallery.lastSync` | label waktu sinkron terakhir |
 | `gallery.backgroundSync` | switch sync WorkManager saat aplikasi tertutup |
 | `gallery.autoSavePhotos` | simpan foto unduhan ke galeri perangkat |
+
+Penghapusan berkas asli tidak pernah berupa hapus permanen. `deleteSourceFile`
+memakai `DocumentsContract.deleteDocument` di Android (penyedia yang mendukung
+Sampah akan memindahkannya ke sana) dan menolak berkas tanpa izin folder yang
+masih berlaku, sedangkan di desktop ia memanggil `Desktop.moveToTrash`. Karena
+itu pemilihan berkas satu per satu tidak pernah ikut terhapus: izinnya hanya
+sekali pakai. `uploadCacheUsage` / `clearUploadCache` mengukur dan mengosongkan
+tiga direktori cache unggahan (`uploads`, `gallery-sync`, `group-photo`) dan
+tidak menyentuh direktori TDLib, jadi membersihkan cache tidak pernah merusak
+sesi Telegram.
 
 ## Navigasi
 
