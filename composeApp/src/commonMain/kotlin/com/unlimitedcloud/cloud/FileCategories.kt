@@ -21,6 +21,19 @@ object FileCategories {
     /** Every folder an automatic upload can land in, in the order shown in the UI. */
     val all: List<String> = listOf(PHOTOS, VIDEOS, AUDIO, DOCUMENTS, ARCHIVES, APPS, OTHER)
 
+    /** Topics this app created, including the one the gallery sync used to use. */
+    private val generated: List<String> = all + GALLERY
+
+    /**
+     * The app-made topic a folder path starts with, or null for a folder the
+     * user named themselves. "Video/Liburan" gives "Video"; "Kerja" gives null,
+     * so a hand-picked folder is never re-filed behind the user's back.
+     */
+    fun generatedTopicOf(folder: String): String? {
+        val head = folder.substringBefore('/').trim()
+        return generated.firstOrNull { it.equals(head, ignoreCase = true) }
+    }
+
     private val photos = setOf(
         "jpg", "jpeg", "jpe", "png", "gif", "webp", "heic", "heif", "avif", "bmp",
         "tif", "tiff", "svg", "raw", "dng", "cr2", "cr3", "nef", "arw", "orf", "rw2",

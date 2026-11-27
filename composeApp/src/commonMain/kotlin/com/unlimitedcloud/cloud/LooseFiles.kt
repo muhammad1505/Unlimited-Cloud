@@ -6,13 +6,14 @@ data class TidyMove(val file: CloudFile, val folder: String)
 /**
  * Topic a message belongs in, or null when it is already filed.
  *
- * A message without a folder caption lives in General, so it always belongs to
- * the topic of its file type. Messages that do carry a caption are left alone,
- * except the ones the folder sync used to file under "Galeri": once automatic
- * filing is on, a video sitting there is moved to "Video" (keeping the relative
- * path, so "Galeri/Liburan" becomes "Video/Liburan"). Without that second rule
- * every video uploaded before per-type filing stayed in the gallery topic
- * forever, because its caption made it look already filed.
+ * The type always comes from the file extension, so no caption can keep a video
+ * in the photo topic. A message without a folder caption lives in General and
+ * belongs to its type topic. A message that does carry one stays put unless the
+ * path starts with a topic this app made: "Galeri" (what the folder sync used
+ * before per-type filing) and the type topics themselves. The relative path is
+ * kept, so "Galeri/Liburan" becomes "Video/Liburan" and an .mp4 misfiled under
+ * "Foto/Liburan" moves to "Video/Liburan". Folders the user named themselves
+ * ("Kerja", "Proyek/2026") are never touched.
  */
 fun tidyTarget(file: CloudFile, autoTopics: Boolean): String? {
     val folder = file.folder
@@ -20,13 +21,14 @@ fun tidyTarget(file: CloudFile, autoTopics: Boolean): String? {
     if (!file.folderFromCaption || folder == null) return type
     if (!autoTopics) return null
 
-    val gallery = FileCategories.GALLERY
-    val isGallery = folder == gallery || folder.startsWith("$gallery/")
-    if (!isGallery) return null
+    // Only paths that begin with an app-made topic are ours to correct.
+    val generated = FileCategories.generatedTopicOf(folder) ?: return null
+    if (generated == type) return null
 
-    // Keep the subfolder the sync recreated: "Galeri/Liburan" → "Video/Liburan".
-    val relative = folder.removePrefix(gallery)
-    return (type + relative).takeIf { it != folder }
+    // Keep whatever sat under the old topic: "Galeri/Liburan" → "Video/Liburan".
+    val slash = folder.indexOf('/')
+    val relative = if (slash < 0) "" else folder.substring(slash)
+    return type + relative
 }
 
 /**

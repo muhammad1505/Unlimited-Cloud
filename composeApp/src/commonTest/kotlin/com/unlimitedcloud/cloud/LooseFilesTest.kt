@@ -91,6 +91,32 @@ class LooseFilesTest {
     }
 
     @Test
+    fun filesUnderTheWrongTypeTopicFollowTheirExtension() {
+        val files = listOf(
+            file(1, "klip.mp4", folder = FileCategories.PHOTOS),
+            file(2, "foto.png", folder = "${FileCategories.VIDEOS}/Liburan"),
+            file(3, "dokumen.pdf", folder = FileCategories.GALLERY),
+        )
+
+        val targets = tidyTargets(files, emptySet(), tidyEverything = true, autoTopics = true)
+
+        assertEquals(
+            listOf(FileCategories.VIDEOS, "${FileCategories.PHOTOS}/Liburan", FileCategories.DOCUMENTS),
+            targets.map { it.folder },
+        )
+    }
+
+    @Test
+    fun foldersTheUserNamedAreLeftAlone() {
+        val files = listOf(
+            file(1, "klip.mp4", folder = "Kerja"),
+            file(2, "foto.png", folder = "Proyek/2026"),
+        )
+
+        assertTrue(tidyTargets(files, emptySet(), tidyEverything = true, autoTopics = true).isEmpty())
+    }
+
+    @Test
     fun galleryUploadsStayWhenAutomaticTopicsAreOff() {
         val files = listOf(file(1, "liburan.mp4", folder = FileCategories.GALLERY))
 

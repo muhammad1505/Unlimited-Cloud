@@ -21,6 +21,13 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.5.1 — 27 November 2026
+
+### Perbaikan
+
+- Rapikan berkas lama kini menentukan topik murni dari ekstensi berkas: video yang salah nyangkut di topik Foto, dokumen di topik Video, dan sejenisnya ikut dipindah ke topik yang benar berikut subfoldernya, tidak hanya yang ber-caption "Galeri".
+- Folder yang Anda buat sendiri (misalnya "Kerja" atau "Proyek/2026") tetap tidak disentuh, karena hanya path yang diawali topik bawaan aplikasi yang dirapikan.
+
 ## 1.5.0 — 27 November 2026
 
 ### Baru

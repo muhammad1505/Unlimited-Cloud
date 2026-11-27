@@ -146,10 +146,13 @@ tiga direktori cache unggahan (`uploads`, `gallery-sync`, `group-photo`) dan
 tidak menyentuh direktori TDLib, jadi membersihkan cache tidak pernah merusak
 sesi Telegram.
 
-`tidyTargets` tidak lagi hanya memindahkan pesan tanpa caption: pesan yang masih
-bercaption "Galeri" (folder sync versi lama) ikut dipindahkan ke topik jenisnya
-saat automatic topics aktif, dengan subfolder dipertahankan. Putaran dibatasi
-`MAX_TIDY_PER_PASS` dan sisanya disimpan di `cloud.tidyPending`.
+`tidyTargets` tidak lagi hanya memindahkan pesan tanpa caption. Jenis berkas
+selalu ditentukan ekstensinya (`FileCategories.folderFor`), dan setiap path yang
+diawali topik bawaan aplikasi (`FileCategories.generatedTopicOf`: Foto, Video,
+…, termasuk "Galeri" warisan folder sync) dipindahkan ke topik jenisnya dengan
+subfolder dipertahankan — jadi video yang salah nyangkut di Foto ikut pindah ke
+Video. Folder yang dinamai pengguna sendiri tidak pernah disentuh. Putaran
+dibatasi `MAX_TIDY_PER_PASS` dan sisanya disimpan di `cloud.tidyPending`.
 
 Notifikasi progres memakai satu notifikasi yang sama dengan `TransferService`,
 tetapi kini membawa fraksi batch (`TransferNotifier.progress(..., fraction)`) dan
