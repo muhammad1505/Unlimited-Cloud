@@ -21,6 +21,23 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.4.0 — 27 November 2026
+
+### Baru
+
+- Grup penyimpanan Telegram kini memakai ikon aplikasi sebagai foto profilnya, jadi mudah dikenali di antara chat lain; ikon diterapkan otomatis saat grup dipilih.
+- Nama grup penyimpanan bisa diubah langsung dari Pengaturan → Penyimpanan (maksimal 128 karakter), dengan tombol Kembalikan bawaan untuk kembali ke “Unlimited Cloud”.
+- Foto kustom untuk grup penyimpanan bisa dipilih dari galeri (Android) atau berkas gambar di komputer (desktop), bila ikon aplikasi kurang cocok.
+- Tombol Buka Telegram membuka grup penyimpanan langsung di aplikasi Telegram lewat tautan dalam, dengan cadangan tautan web bila aplikasi tidak terpasang.
+- Kartu penyimpanan menampilkan pratinjau grup dan dua sakelar: Bisukan grup dan Arsipkan grup. Grup dibisukan secara bawaan karena setiap unggahan memposting pesan, dan bisa dikeluarkan dari arsip lagi.
+
+### Perbaikan
+
+- Nama grup yang diubah tidak lagi membuat grup penyimpanan baru atau meninggalkan grup lama: id grup yang tersimpan tetap menjadi bukti kepemilikan, dan nama hanya dipakai untuk pencarian.
+- Deskripsi grup penyimpanan kini memuat penanda versi, sehingga grup dengan nama generik bisa dipastikan milik aplikasi sebelum dipakai, alih-alih dibuat ulang.
+- Grup lama yang topiknya dimatikan tidak lagi memicu pembuatan grup baru; topik diaktifkan kembali pada grup milik aplikasi.
+- Identitas grup (id, nama, keadaan bisu dan arsip, versi deskripsi) dibersihkan saat akun diganti, sehingga pengaturan akun lama tidak terbawa ke akun baru.
+
 ## 1.3.9 — 27 November 2026
 
 ### Baru
