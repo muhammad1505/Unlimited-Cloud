@@ -90,6 +90,8 @@ data class ExplorerUiState(
     val autoSavePhotos: Boolean = false,
     /** How many files a batch uploads or downloads at once (Settings). */
     val parallelTransfers: Int = 3,
+    /** Whether uploads without a folder are filed into a topic by file type. */
+    val autoTopics: Boolean = true,
     /** Custom name of the storage group; null while it keeps the default one. */
     val storageTitle: String? = null,
     /** Whether the storage group is muted in Telegram. */
@@ -187,6 +189,7 @@ class CloudFilesViewModel(
             autoSaveSupported = mediaSaver.supported,
             autoSavePhotos = preferences.autoSavePhotos(),
             parallelTransfers = preferences.transferParallelism(),
+            autoTopics = preferences.autoTopics(),
             storageTitle = preferences.cloudRootTitle(),
             storageMuted = preferences.cloudRootMuted(),
             storageArchived = preferences.cloudRootArchived(),
@@ -203,6 +206,7 @@ class CloudFilesViewModel(
     private var transferCounter = 0L
     private val transferIdLock = Any()
     private var refreshJob: Job? = null
+    private var tidyJob: Job? = null
 
     /**
      * Transfer ids are handed out from parallel workers, so the counter is
@@ -262,6 +266,10 @@ class CloudFilesViewModel(
                     nextFromMessageId = cursor,
                 )
             }
+
+            // Reaching the end of the history is the only moment the whole list
+            // is known, so messages without a folder are tidied here.
+            if (cursor == null) maybeTidyLooseFiles(chatId)
         }
     }
 
@@ -319,6 +327,7 @@ class CloudFilesViewModel(
                             error = null,
                         )
                     }
+                    if (page.nextFromMessageId == null) maybeTidyLooseFiles(chatId)
                 }
                 .onFailure { failure ->
                     state.update {
@@ -338,6 +347,57 @@ class CloudFilesViewModel(
 
     fun setSort(sort: FileSort) {
         state.update { it.copy(sort = sort) }
+    }
+
+    /**
+     * Turns automatic filing on or off. The list is re-read so caption-less
+     * messages are regrouped right away instead of after the next launch.
+     */
+    fun setAutoTopics(enabled: Boolean) {
+        preferences.setAutoTopics(enabled)
+        state.update { it.copy(autoTopics = enabled) }
+        refresh()
+    }
+
+    /**
+     * Moves messages left over from versions that did not file by type into
+     * their type topic, once per account. The flag is written before the first
+     * move, so a file that cannot be forwarded is never copied again on every
+     * launch.
+     */
+    private fun maybeTidyLooseFiles(chatId: Long) {
+        if (!state.value.autoTopics || preferences.looseFilesTidied()) return
+        if (tidyJob?.isActive == true) return
+        val loose = state.value.files.filter { !it.folderFromCaption }
+        preferences.setLooseFilesTidied(true)
+        if (loose.isEmpty()) return
+
+        tidyJob = scope.launch {
+            logDiagnostic(LOG_TAG, "rapikan: ${loose.size} berkas tanpa topik")
+            state.update { it.copy(status = "Merapikan ${loose.size} berkas lama…") }
+            var moved = 0
+            var failed = 0
+            loose.forEach { file ->
+                val folder = FileCategories.folderFor(file.name)
+                val ok = runCatching {
+                    repository.moveToTypeTopic(chatId, file.messageId, folder)
+                }.getOrDefault(false)
+                if (ok) moved++ else failed++
+            }
+            logDiagnostic(LOG_TAG, "rapikan selesai: $moved dipindah, $failed gagal")
+            state.update {
+                it.copy(
+                    status = if (moved > 0) {
+                        "$moved berkas lama dipindah ke topik jenisnya"
+                    } else {
+                        null
+                    },
+                    error = if (failed > 0) "$failed berkas lama gagal dirapikan" else null,
+                )
+            }
+            // The ids changed (forward + delete), so the list is read again.
+            if (moved > 0) refresh()
+        }
     }
 
     /** Saves the parallel transfer count; running batches keep their worker count. */
@@ -715,8 +775,10 @@ class CloudFilesViewModel(
      * Explicit folders win; without one the file is filed by its type. Every
      * upload therefore has a topic, so nobody has to pick a folder first.
      */
-    private fun folderFor(folder: String?, localPath: String): String =
-        normalizeFolder(folder) ?: FileCategories.folderFor(localPath.fileName())
+    private fun folderFor(folder: String?, localPath: String): String? {
+        normalizeFolder(folder)?.let { return it }
+        return if (state.value.autoTopics) FileCategories.folderFor(localPath.fileName()) else null
+    }
 
     private fun String.fileName(): String =
         substringAfterLast('/').substringAfterLast('\\').ifBlank { "berkas" }
@@ -1159,6 +1221,7 @@ class CloudFilesViewModel(
             autoSaveSupported = mediaSaver.supported,
             autoSavePhotos = preferences.autoSavePhotos(),
             parallelTransfers = preferences.transferParallelism(),
+            autoTopics = preferences.autoTopics(),
             storageTitle = preferences.cloudRootTitle(),
             storageMuted = preferences.cloudRootMuted(),
             storageArchived = preferences.cloudRootArchived(),
@@ -1358,7 +1421,14 @@ class CloudFilesViewModel(
                                     // the tree is recreated beneath that topic: a
                                     // photo from Liburan/Pantai lands in
                                     // Foto/Liburan/Pantai instead of "Galeri".
-                                    val target = FileCategories.folderFor(file.name) +
+                                    // With automatic topics off they keep using
+                                    // the single "Galeri" folder as before.
+                                    val topic = if (state.value.autoTopics) {
+                                        FileCategories.folderFor(file.name)
+                                    } else {
+                                        GALLERY_FOLDER
+                                    }
+                                    val target = topic +
                                         file.relativeDirectory
                                             .takeIf { it.isNotBlank() }
                                             ?.let { "/$it" }
@@ -1562,7 +1632,7 @@ class CloudFilesViewModel(
         var lastFailure: Throwable? = null
         repeat(PAGE_ATTEMPTS) { attempt ->
             runCatching { repository.listFiles(chatId, fromMessageId) }
-                .onSuccess { return it }
+                .onSuccess { return it.filedByType(state.value.autoTopics) }
                 .onFailure { failure ->
                     lastFailure = failure
                     delay(PAGE_RETRY_MILLIS * (attempt + 1))
@@ -1570,6 +1640,19 @@ class CloudFilesViewModel(
         }
         throw lastFailure ?: IllegalStateException("Gagal memuat daftar berkas")
     }
+
+    /** Files caption-less messages under their type topic; off keeps them loose. */
+    private fun CloudPage.filedByType(enabled: Boolean): CloudPage =
+        if (!enabled) {
+            this
+        } else {
+            copy(
+                files = files.map { file ->
+                    if (file.folderFromCaption) file
+                    else file.copy(folder = FileCategories.folderFor(file.name))
+                },
+            )
+        }
 
     /** Resolves the group, waiting out a TDLib session that is still starting. */
     private suspend fun ensureChannelWithRetry(): Long? {
@@ -1586,6 +1669,7 @@ class CloudFilesViewModel(
         const val CHANNEL_RETRY_MILLIS = 1_500L
         const val PAGE_ATTEMPTS = 3
         const val PAGE_RETRY_MILLIS = 1_000L
+        const val GALLERY_FOLDER = "Galeri"
         const val MAX_GALLERY_ATTEMPTS = 3
         const val MAX_COVER_CACHE_ENTRIES = 500
         const val MAX_PREVIEW_CACHE_ENTRIES = 12

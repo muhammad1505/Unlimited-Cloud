@@ -149,6 +149,7 @@ fun SettingsScreen(
             onPickPhoto = pickStoragePhoto,
             onMutedChange = viewModel::setStorageMuted,
             onArchivedChange = viewModel::setStorageArchived,
+            onAutoTopicsChange = viewModel::setAutoTopics,
             onOpenTelegram = {
                 val chatId = (channelState as? CloudChannelState.Ready)?.chatId
                 if (chatId == null || !openTelegramChat(chatId)) {
@@ -398,6 +399,7 @@ private fun StorageCard(
     onPickPhoto: () -> Unit,
     onMutedChange: (Boolean) -> Unit,
     onArchivedChange: (Boolean) -> Unit,
+    onAutoTopicsChange: (Boolean) -> Unit,
     onOpenTelegram: () -> Unit,
     onRefresh: () -> Unit,
 ) {
@@ -510,6 +512,14 @@ private fun StorageCard(
             description = "Simpan grup di arsip Telegram agar daftar chat tetap rapi.",
             checked = state.storageArchived,
             onCheckedChange = onArchivedChange,
+            enabled = !customizing,
+        )
+        ToggleRow(
+            title = "Kelompokkan otomatis",
+            description = "Unggahan masuk topik sesuai jenisnya (Foto, Video, Dokumen, …) " +
+                "tanpa perlu memilih folder.",
+            checked = state.autoTopics,
+            onCheckedChange = onAutoTopicsChange,
             enabled = !customizing,
         )
         Spacer(Modifier.height(2.dp))

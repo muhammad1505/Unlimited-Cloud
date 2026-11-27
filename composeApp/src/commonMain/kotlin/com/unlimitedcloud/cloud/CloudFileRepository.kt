@@ -31,6 +31,8 @@ data class CloudFile(
     val size: Long,
     /** Virtual folder, carried by the message caption. */
     val folder: String?,
+    /** True when [folder] comes from the caption instead of the file's type. */
+    val folderFromCaption: Boolean = false,
     /** TDLib's small preview image, only present when the sender provided one. */
     val thumbnailId: Int? = null,
 )
@@ -307,6 +309,70 @@ class CloudFileRepository(private val session: TdJsonSession) {
     }
 
     /**
+     * Moves a message that carries no folder caption into the topic of [folder].
+     *
+     * Telegram cannot move a message between topics, so the file is forwarded
+     * into the target topic first and the copy receives the folder caption; only
+     * then is the original deleted. A forward that fails therefore never loses
+     * the file. Returns true when the original was deleted, i.e. the file now
+     * lives only inside its type topic.
+     */
+    suspend fun moveToTypeTopic(chatId: Long, messageId: Long, folder: String): Boolean {
+        val topicId = topics.resolve(chatId, folder) ?: return false
+        val forwarded = session.call(
+            buildJsonObject {
+                put("@type", "forwardMessages")
+                put("chat_id", chatId)
+                put("topic_id", forumTopicJson(topicId))
+                put("from_chat_id", chatId)
+                put("message_ids", buildJsonArray { add(JsonPrimitive(messageId)) })
+                put("options", JsonNull)
+                put("send_copy", false)
+                put("remove_caption", false)
+            },
+        )
+        val error = forwarded["message"]?.jsonPrimitive?.contentOrNull
+            ?.takeIf { forwarded["@type"]?.jsonPrimitive?.contentOrNull == "error" }
+        if (error != null) {
+            logDiagnostic(LOG_TAG, "pindah topik '$folder' ditolak TDLib: $error")
+            return false
+        }
+        val copyId = forwarded["messages"]
+            ?.jsonArray
+            ?.firstOrNull()
+            ?.jsonObject
+            ?.get("id")
+            ?.jsonPrimitive
+            ?.longOrNull
+            ?: return false
+
+        // The copy gets the folder caption, so it stays grouped after automatic
+        // topics are switched off. A caption that cannot be written does not
+        // stop the move: the file already sits in the right topic.
+        val captioned = runCatching {
+            session.call(
+                buildJsonObject {
+                    put("@type", "editMessageCaption")
+                    put("chat_id", chatId)
+                    put("message_id", copyId)
+                    put(
+                        "caption",
+                        buildJsonObject {
+                            put("text", folder)
+                            put("entities", buildJsonArray {})
+                        },
+                    )
+                },
+            )
+        }.getOrNull()
+        if (captioned == null || captioned["@type"]?.jsonPrimitive?.contentOrNull == "error") {
+            logDiagnostic(LOG_TAG, "caption '$folder' gagal ditulis pada pesan $copyId")
+        }
+
+        return runCatching { deleteMessages(chatId, listOf(messageId)) }.isSuccess
+    }
+
+    /**
      * Deletes the forum topic of [folder] after its last file was removed, so an
      * empty folder cannot remain as a tab in Telegram.
      */
@@ -385,9 +451,9 @@ class CloudFileRepository(private val session: TdJsonSession) {
             ?.takeIf { it.isNotBlank() }
             ?: "file-$messageId"
         // Files uploaded before automatic topics (and anything that reached the
-        // group outside the app) carry no folder caption. They are filed by type
-        // when read, so the explorer shows them under Foto, Video, ... right away
-        // instead of leaving them loose in "Tanpa folder".
+        // group outside the app) carry no folder caption. The caller files them
+        // by type when reading, so the explorer shows them under Foto, Video, ...
+        // right away instead of leaving them loose in "Tanpa folder".
         val folder = content["caption"]
             ?.jsonObject
             ?.get("text")
@@ -395,7 +461,6 @@ class CloudFileRepository(private val session: TdJsonSession) {
             ?.contentOrNull
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
-            ?: FileCategories.folderFor(name)
 
         return CloudFile(
             messageId = messageId,
@@ -403,6 +468,7 @@ class CloudFileRepository(private val session: TdJsonSession) {
             name = name,
             size = file["size"]?.jsonPrimitive?.longOrNull ?: 0L,
             folder = folder,
+            folderFromCaption = folder != null,
             thumbnailId = thumbnailId,
         )
     }

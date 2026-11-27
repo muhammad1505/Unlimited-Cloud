@@ -462,6 +462,7 @@ fun FilesScreen(
         UploadDialog(
             folders = state.folders,
             initialFolder = uploadFolder,
+            autoTopics = state.autoTopics,
             onDismiss = { showUploadDialog = false },
             onConfirm = { folder ->
                 uploadFolder = folder
@@ -1404,6 +1405,7 @@ private fun SkeletonList() {
 private fun UploadDialog(
     folders: List<String>,
     initialFolder: String?,
+    autoTopics: Boolean,
     onDismiss: () -> Unit,
     onConfirm: (String?) -> Unit,
     onPickFolder: (String?) -> Unit,
@@ -1450,7 +1452,14 @@ private fun UploadDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Unggah berkas", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            text = "Berkas otomatis masuk topik sesuai jenisnya (Foto, Video, Dokumen, dan seterusnya). Pilih folder hanya bila ingin menaruhnya di tempat lain.",
+                            text = if (autoTopics) {
+                                "Berkas otomatis masuk topik sesuai jenisnya (Foto, Video, " +
+                                    "Dokumen, dan seterusnya). Pilih folder hanya bila ingin " +
+                                    "menaruhnya di tempat lain."
+                            } else {
+                                "Pilih folder tujuan, lalu unggah beberapa berkas sekaligus " +
+                                    "atau seluruh folder beserta subfoldernya."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1471,7 +1480,7 @@ private fun UploadDialog(
                             folder = null
                             customFolder = ""
                         },
-                        label = { Text("Otomatis") },
+                        label = { Text(if (autoTopics) "Otomatis" else "Tanpa folder") },
                         shape = RoundedCornerShape(12.dp),
                     )
                     folders.forEach { existing ->

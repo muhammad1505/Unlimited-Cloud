@@ -56,7 +56,16 @@ Channel pribadi adalah database sekaligus filesystem:
   `Foto`, `Video`, `Audio`, `Dokumen`, `Arsip`, `Aplikasi`, `Lainnya`
   (`FileCategories.folderFor`). Folder yang dipilih manual tetap menang.
   Sinkron galeri memakai topik yang sama dan mempertahankan subfolder aslinya,
-  misalnya `Foto/DCIM/Camera`.
+  misalnya `Foto/DCIM/Camera`. Sakelar "Kelompokkan otomatis" mematikan aturan
+  ini: unggahan kembali ke General kebukannya dan sinkron galeri kembali ke
+  `Galeri`.
+- Pesan lama tanpa caption dirapikan sekali per akun: `forwardMessages`
+  (`topic_id` bertipe `MessageTopic`, tersedia sejak TDLib 1.8.71) menyalin berkas
+  ke topik jenisnya, caption folder ditulis ke salinan lewat `editMessageCaption`,
+  lalu pesan asli dihapus. Forward selalu berjalan sebelum delete, jadi
+  kegagalan tidak pernah menghilangkan berkas. Flag `cloud.looseFilesTidied`
+  diset sebelum perapian pertama, sehingga berkas yang gagal tidak disalin ulang
+  setiap aplikasi dibuka.
 - Daftar berkas = `getChatHistory` dengan pagination `from_message_id`.
 - Hapus = `deleteMessages` dengan `revoke = true`, dipecah per 100 id karena
   TDLib menolak permintaan yang membawa lebih banyak id sekaligus.
@@ -111,6 +120,8 @@ bila berkas utama terpotong. Isinya:
 | `cloud.muted` | grup penyimpanan dibisukan (bawaan `true`) |
 | `cloud.archived` | grup penyimpanan disimpan di arsip Telegram |
 | `cloud.descriptionVersion` | versi aplikasi yang tertulis di deskripsi grup |
+| `cloud.autoTopics` | unggahan difilingkan ke topik jenis (bawaan `true`) |
+| `cloud.looseFilesTidied` | penanda perapian berkas lama sudah dijalankan |
 | `changelog.lastSeenVersionCode` | gate pop-up pembaruan |
 | `gallery.autoSync` | switch sinkronisasi otomatis |
 | `gallery.folderId` / `gallery.folderName` | folder SAF yang dipilih |

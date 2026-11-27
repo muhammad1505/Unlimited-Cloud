@@ -103,6 +103,24 @@ class AppPreferences(
         put(KEY_CLOUD_DESCRIPTION_VERSION, version)
 
     /**
+     * Whether uploads without a folder are filed into a topic by file type.
+     * Off restores the old behaviour: files stay in General (or "Galeri" for
+     * gallery sync) until the user picks a folder by hand.
+     */
+    fun autoTopics(): Boolean = get(KEY_AUTO_TOPICS)?.toBooleanStrictOrNull() ?: true
+
+    fun setAutoTopics(enabled: Boolean) = put(KEY_AUTO_TOPICS, enabled.toString())
+
+    /**
+     * One-time flag for moving caption-less messages into their type topic. It
+     * is set before the first move, so a file that cannot be forwarded is never
+     * copied again (and again) on every launch.
+     */
+    fun looseFilesTidied(): Boolean = get(KEY_LOOSE_FILES_TIDIED) == "true"
+
+    fun setLooseFilesTidied(done: Boolean) = put(KEY_LOOSE_FILES_TIDIED, done.toString())
+
+    /**
      * Drops the keys that belong to the Telegram account. The picked gallery
      * folders are kept: those are device grants, not account data.
      */
@@ -113,6 +131,8 @@ class AppPreferences(
             put(KEY_CLOUD_ROOT_MUTED, null)
             put(KEY_CLOUD_ROOT_ARCHIVED, null)
             put(KEY_CLOUD_DESCRIPTION_VERSION, null)
+            put(KEY_AUTO_TOPICS, null)
+            put(KEY_LOOSE_FILES_TIDIED, null)
             put(KEY_GALLERY_SYNCED_KEYS, null)
             put(KEY_GALLERY_FAILED_KEYS, null)
             put(KEY_GALLERY_LAST_SYNC, null)
@@ -390,6 +410,8 @@ class AppPreferences(
         const val KEY_CLOUD_ROOT_MUTED = "cloud.muted"
         const val KEY_CLOUD_ROOT_ARCHIVED = "cloud.archived"
         const val KEY_CLOUD_DESCRIPTION_VERSION = "cloud.descriptionVersion"
+        const val KEY_AUTO_TOPICS = "cloud.autoTopics"
+        const val KEY_LOOSE_FILES_TIDIED = "cloud.looseFilesTidied"
         const val KEY_LAST_SEEN_VERSION = "changelog.lastSeenVersionCode"
         const val KEY_GALLERY_AUTO_SYNC = "gallery.autoSync"
         const val KEY_GALLERY_BACKGROUND_SYNC = "gallery.backgroundSync"
