@@ -142,6 +142,20 @@ class LooseFilesTest {
     }
 
     @Test
+    fun oneRunCoversAHistoryOfHundreds() {
+        // 902 old messages is what a real account reported; a cap of ten slices
+        // left more than half of them behind while the status said it was done.
+        val targets = (1L..902L).map { id ->
+            TidyMove(file(id, "lama.jpg", "Kerja"), FileCategories.PHOTOS)
+        }
+
+        val batches = tidyBatches(targets, perRun = 40, maxRuns = 250)
+
+        assertEquals(902, batches.flatten().map { it.file.messageId }.distinct().size)
+        assertTrue(batches.all { it.size <= 40 })
+    }
+
+    @Test
     fun galleryUploadsStayWhenAutomaticTopicsAreOff() {
         val files = listOf(file(1, "liburan.mp4", folder = FileCategories.GALLERY))
 

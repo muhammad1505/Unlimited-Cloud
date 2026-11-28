@@ -1821,10 +1821,24 @@ class CloudFilesViewModel(
             // the notification can say how many files and roughly how long,
             // instead of showing an endless spinner.
             var planned = 0
+            // A folder whose grant is gone reads as empty, so the failures are
+            // kept and reported: "0 berkas menunggu" plus a synced-looking
+            // result hid the fact that nothing could be read at all.
+            val unreadable = mutableListOf<String>()
+            fun rememberUnreadable(folder: GalleryFolder) {
+                if (folder.name !in unreadable) unreadable += folder.name
+            }
             folders.forEach { folder ->
                 planned += runCatching {
                     gallerySource.countPending(folder, attempted)
-                }.getOrDefault(0)
+                }.getOrElse { failure ->
+                    rememberUnreadable(folder)
+                    logDiagnostic(
+                        LOG_TAG,
+                        "galeri ${folder.name} gagal dihitung: ${failure.message}",
+                    )
+                    0
+                }
             }
             val startedAt = TimeSource.Monotonic.markNow()
             var doneSoFar = 0
@@ -1859,6 +1873,7 @@ class CloudFilesViewModel(
                         )
                     }.getOrElse { failure ->
                         folderFailed++
+                        rememberUnreadable(folder)
                         logDiagnostic(
                             LOG_TAG,
                             "galeri ${folder.name} gagal dibaca: ${failure.message}",
@@ -2008,6 +2023,11 @@ class CloudFilesViewModel(
             }
 
             notifier.clearProgress()
+            val unreadableNote = if (unreadable.isEmpty()) {
+                ""
+            } else {
+                " · folder ${unreadable.joinToString(", ")} tidak bisa dibaca"
+            }
             val skippedNote = if (skipped > 0) " · $skipped berkas dilewati" else ""
             val originalsNote = when {
                 originalsDeleted > 0 && originalsFailed > 0 ->
@@ -2041,13 +2061,23 @@ class CloudFilesViewModel(
                     galleryDone = 0,
                     galleryEtaSeconds = null,
                     status = when {
-                        uploaded > 0 -> "$uploaded berkas disinkronkan$skippedNote$originalsNote"
+                        uploaded > 0 ->
+                            "$uploaded berkas disinkronkan$skippedNote$originalsNote$unreadableNote"
                         failed == 0 && skipped > 0 ->
-                            "$skipped berkas dilewati: tidak bisa dibaca atau tidak muat di cache"
-                        failed == 0 -> "Folder sudah sinkron"
+                            "$skipped berkas dilewati: tidak bisa dibaca atau tidak muat " +
+                                "di cache$unreadableNote"
+                        failed == 0 && unreadable.isEmpty() -> "Folder sudah sinkron"
                         else -> null
                     },
-                    error = if (failed > 0) "$failed berkas gagal disinkronkan" else null,
+                    error = when {
+                        // The grant is the one thing the user can repair, so it
+                        // wins over the generic failure count.
+                        unreadable.isNotEmpty() ->
+                            "Folder ${unreadable.joinToString(", ")} tidak bisa dibaca lagi. " +
+                                "Pilih ulang folder di Pengaturan → Penyimpanan."
+                        failed > 0 -> "$failed berkas gagal disinkronkan"
+                        else -> null
+                    },
                 )
             }
         }
@@ -2212,8 +2242,12 @@ class CloudFilesViewModel(
         /** Moves per tidy slice, so a burst stays under the account limits. */
         const val MAX_TIDY_PER_PASS = 40
 
-        /** Slices one tidy run may send before the rest waits for the next run. */
-        const val MAX_TIDY_RUNS = 10
+        /**
+         * Runaway guard for one tidy pass, not a work budget: a history of 900
+         * old messages needs 23 slices, and a cap of 10 used to leave most of
+         * them behind while the status claimed the pass was done.
+         */
+        const val MAX_TIDY_RUNS = 250
 
         /** Pause between slices, long enough for Telegram to forget the burst. */
         const val TIDY_PAUSE_MILLIS = 2_000L

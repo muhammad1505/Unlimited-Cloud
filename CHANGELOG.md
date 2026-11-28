@@ -21,6 +21,15 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.5.3 — 28 November 2026
+
+### Perbaikan
+
+- Caption folder pada berkas hasil "Rapikan berkas lama" akhirnya tertulis: salinan hasil forward masih dalam keadaan "sedang dikirim" saat caption ditulis, dan Telegram menolak mengedit pesan seperti itu. Aplikasi kini menunggu salinan benar-benar terkirim lalu mencoba lagi beberapa kali, jadi berkas tidak lagi menumpuk tanpa keterangan folder.
+- Kegagalan caption dicatat lengkap dengan alasan dari Telegram (mis. `Message can't be edited`), bukan hanya "gagal ditulis".
+- "Rapikan berkas lama" tidak lagi berhenti di 400 berkas: batas 10 irisan diganti penjaga 250 irisan, sehingga riwayat berisi 900 berkas selesai dalam satu putaran dan tidak menyisakan sisanya untuk lain waktu.
+- Folder galeri yang izinnya dicabut kini dilaporkan dengan alasannya dan langkah perbaikannya ("Pilih ulang folder di Pengaturan → Penyimpanan"), bukan hanya "Folder sinkron tidak bisa dibaca" sambil menampilkan 0 berkas menunggu.
+
 ## 1.5.2 — 28 November 2026
 
 ### Perbaikan

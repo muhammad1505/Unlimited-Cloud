@@ -136,7 +136,9 @@ private class AndroidGallerySyncSource(
             ?: error("Folder sinkron tidak bisa dibaca")
         val rootDocumentId = runCatching {
             DocumentsContract.getTreeDocumentId(uri)
-        }.getOrNull() ?: error("Folder sinkron tidak bisa dibaca")
+        }.getOrNull() ?: error(
+            "Folder sinkron tidak bisa dibaca: pilihan folder tidak valid, pilih ulang foldernya",
+        )
         return uri to rootDocumentId
     }
 
@@ -228,7 +230,16 @@ private class AndroidGallerySyncSource(
 
     private fun unreadable(depth: Int, failure: Exception?) {
         if (depth == 0) {
-            throw IllegalStateException("Folder sinkron tidak bisa dibaca", failure)
+            // The reason travels with the message: "gagal dibaca" alone left the
+            // user with no idea that the folder grant had been revoked, which is
+            // what a reinstall or a cleared provider cache leaves behind.
+            throw IllegalStateException(
+                "Folder sinkron tidak bisa dibaca" + (
+                    failure?.message?.let { ": $it" }
+                        ?: ": izin folder kemungkinan dicabut, pilih ulang foldernya"
+                    ),
+                failure,
+            )
         }
         logDiagnostic(
             LOG_TAG,

@@ -381,36 +381,21 @@ class CloudFileRepository(private val session: TdJsonSession) {
             logDiagnostic(LOG_TAG, "pindah topik '$folder' ditolak TDLib: $error")
             return false
         }
-        val copyId = forwarded["messages"]
+        val copy = forwarded["messages"]
             ?.jsonArray
             ?.firstOrNull()
             ?.jsonObject
-            ?.get("id")
-            ?.jsonPrimitive
-            ?.longOrNull
-            ?: return false
+        val copyId = copy?.get("id")?.jsonPrimitive?.longOrNull ?: return false
 
         // The copy gets the folder caption, so it stays grouped after automatic
         // topics are switched off. A caption that cannot be written does not
         // stop the move: the file already sits in the right topic.
-        val captioned = runCatching {
-            session.call(
-                buildJsonObject {
-                    put("@type", "editMessageCaption")
-                    put("chat_id", chatId)
-                    put("message_id", copyId)
-                    put(
-                        "caption",
-                        buildJsonObject {
-                            put("text", folder)
-                            put("entities", buildJsonArray {})
-                        },
-                    )
-                },
+        val captionError = editCaption(chatId, copyId, folder)
+        if (captionError != null) {
+            logDiagnostic(
+                LOG_TAG,
+                "caption '$folder' gagal ditulis pada pesan $copyId: $captionError",
             )
-        }.getOrNull()
-        if (captioned == null || captioned["@type"]?.jsonPrimitive?.contentOrNull == "error") {
-            logDiagnostic(LOG_TAG, "caption '$folder' gagal ditulis pada pesan $copyId")
         }
 
         val deleted = runCatching { deleteMessages(chatId, listOf(messageId)) }.isSuccess
@@ -418,6 +403,72 @@ class CloudFileRepository(private val session: TdJsonSession) {
             logDiagnostic(LOG_TAG, "pesan asli $messageId gagal dihapus setelah disalin ke '$folder'")
         }
         return true
+    }
+
+    /**
+     * Writes the folder caption onto the forwarded copy.
+     *
+     * The copy is still being sent when `forwardMessages` returns, and TDLib
+     * refuses to edit a message in that state with "Message can't be edited",
+     * which is why every caption of a tidy pass used to be lost. The message is
+     * waited for and the edit retried before the caption is given up on.
+     *
+     * Returns the TDLib error when it still fails, so the log says why instead of
+     * only that it failed. A caption Telegram permanently rejects (a content type
+     * it cannot caption, for example) is not retried.
+     */
+    private suspend fun editCaption(chatId: Long, messageId: Long, folder: String): String? {
+        var lastError: String? = null
+        repeat(CAPTION_ATTEMPTS) { attempt ->
+            if (attempt > 0) {
+                awaitSent(chatId, messageId)
+                delay(CAPTION_RETRY_MILLIS)
+            }
+            val response = runCatching {
+                session.call(
+                    buildJsonObject {
+                        put("@type", "editMessageCaption")
+                        put("chat_id", chatId)
+                        put("message_id", messageId)
+                        put(
+                            "caption",
+                            buildJsonObject {
+                                put("text", folder)
+                                put("entities", buildJsonArray {})
+                            },
+                        )
+                    },
+                )
+            }.getOrElse { failure ->
+                lastError = failure.message ?: "tanpa keterangan"
+                return@repeat
+            }
+            if (response["@type"]?.jsonPrimitive?.contentOrNull != "error") return null
+            lastError = response["message"]?.jsonPrimitive?.contentOrNull ?: "tanpa keterangan"
+            if (lastError?.contains("can't be edited", ignoreCase = true) != true) {
+                return lastError
+            }
+        }
+        return lastError
+    }
+
+    /** Waits until TDLib finished sending [messageId]; a pending copy cannot be edited. */
+    private suspend fun awaitSent(chatId: Long, messageId: Long) {
+        repeat(SEND_WAIT_ATTEMPTS) {
+            val message = runCatching {
+                session.call(
+                    buildJsonObject {
+                        put("@type", "getMessage")
+                        put("chat_id", chatId)
+                        put("message_id", messageId)
+                    },
+                )
+            }.getOrNull() ?: return
+            if (message["@type"]?.jsonPrimitive?.contentOrNull == "error") return
+            val state = message["sending_state"]
+            if (state == null || state is JsonNull) return
+            delay(SEND_WAIT_MILLIS)
+        }
     }
 
     /**
@@ -571,6 +622,14 @@ class CloudFileRepository(private val session: TdJsonSession) {
          * until the transfer in front of it has finished.
          */
         val UPLOAD_STALL_TIMEOUT = 30.minutes
+
+        /** Caption writes tried per forwarded copy before the caption is given up. */
+        const val CAPTION_ATTEMPTS = 4
+        const val CAPTION_RETRY_MILLIS = 700L
+
+        /** How long a just-forwarded copy may take to be sent (10 seconds). */
+        const val SEND_WAIT_ATTEMPTS = 20
+        const val SEND_WAIT_MILLIS = 500L
     }
 }
 

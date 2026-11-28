@@ -69,7 +69,12 @@ Channel pribadi adalah database sekaligus filesystem:
 - Pesan lama tanpa caption dirapikan otomatis: `forwardMessages` (`topic_id`
   bertipe `MessageTopic`, tersedia sejak TDLib 1.8.71) menyalin berkas ke topik
   jenisnya, caption folder ditulis ke salinan lewat `editMessageCaption`, lalu
-  pesan asli dihapus. Forward selalu berjalan sebelum delete, jadi kegagalan
+  pesan asli dihapus. Salinan hasil forward masih berstatus `sending_state` saat
+  `editMessageCaption` dipanggil, dan TDLib menolak mengedit pesan seperti itu
+  (`Message can't be edited`) — dulu setiap caption hilang karena itu. Repository
+  kini menunggu status kirim hilang (`getMessage`), mengulang beberapa kali, dan
+  mencatat alasan penolakan TDLib-nya bila tetap gagal. Caption yang gagal tidak
+  membatalkan pemindahan: berkas sudah berada di topik yang benar. Forward selalu berjalan sebelum delete, jadi kegagalan
   tidak pernah menghilangkan berkas. Sapuan penuh pertama ditandai
   `cloud.looseFilesTidied`; id yang gagal disimpan di `cloud.tidyPending` dan
   dicoba lagi pada sapuan berikutnya alih-alih ditinggal di General selamanya.
@@ -163,8 +168,11 @@ diawali topik bawaan aplikasi (`FileCategories.generatedTopicOf`: Foto, Video,
 …, termasuk "Galeri" warisan folder sync) dipindahkan ke topik jenisnya dengan
 subfolder dipertahankan — jadi video yang salah nyangkut di Foto ikut pindah ke
 Video. Folder yang dinamai pengguna sendiri tidak pernah disentuh. Satu putaran
-berjalan dalam irisan `MAX_TIDY_PER_PASS` berkas dengan jeda antar-irisan,
-maksimal `MAX_TIDY_RUNS` irisan (`tidyBatches`), dan sisanya disimpan di
+  berjalan dalam irisan `MAX_TIDY_PER_PASS` berkas dengan jeda antar-irisan;
+  `MAX_TIDY_RUNS` hanya penjaga agar putaran tidak liar (250 irisan ≈ 10.000
+  berkas), bukan anggaran kerja, jadi riwayat 900 berkas selesai dalam satu
+  putaran (batas 10 irisan dulu menyisakan lebih dari separuhnya), dan sisanya —
+  bila ada — disimpan di
 `cloud.tidyPending`. Bila riwayat belum habis setelah `MAX_COMPLETE_PAGES`,
 `completeHistory` mengembalikan `false`, kursor disimpan sehingga tombol
 Rapikan berikutnya melanjutkan, dan status tidak mengklaim daftar sudah bersih.
@@ -247,7 +255,10 @@ baru di folder terpilih terunggah dalam satu sesi. Kunci sinkron dicatat per dok
 jadi sisa batch dilanjutkan pada jadwal berikutnya. Satu batch Android menyalin
 paling banyak setengah ruang cache yang kosong; dokumen yang tidak
 muat atau gagal disalin masuk ke `GalleryBatch.skippedKeys`, dilaporkan di status dan
-notifikasi, lalu dicoba lagi pada sinkron berikutnya. Yang disalin adalah semua jenis
+notifikasi, lalu dicoba lagi pada sinkron berikutnya. Folder yang izin SAF-nya hilang
+(mis. setelah pasang ulang) gagal dibaca dengan sebabnya dan muncul sebagai pesan
+"pilih ulang folder di Pengaturan → Penyimpanan"; dulu kegagalan itu tertukar dengan
+folder kosong ("0 berkas menunggu"). Yang disalin adalah semua jenis
 berkas (bukan hanya gambar) beserta struktur subfoldernya: `Galeri/Liburan/Pantai`.
 Tidak ada layanan latar depan; progres dan hasil transfer muncul sebagai notifikasi
 bila izinnya diberikan, dan `FOREGROUND_SERVICE` bawaan WorkManager tetap dihapus
