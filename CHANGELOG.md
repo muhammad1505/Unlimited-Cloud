@@ -21,7 +21,7 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
-## 1.6.0 — 28 November 2026
+## 1.5.2 — 28 November 2026
 
 ### Perbaikan
 
