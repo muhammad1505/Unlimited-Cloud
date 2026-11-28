@@ -50,3 +50,20 @@ fun tidyTargets(
     if (!tidyEverything && file.messageId !in pending) return@mapNotNull null
     tidyTarget(file, autoTopics)?.let { folder -> TidyMove(file, folder) }
 }
+
+/**
+ * Splits one tidy run into the slices Telegram can take back to back.
+ *
+ * A run used to move [perRun] messages and leave the rest for the next launch,
+ * so a hundred old files needed the button pressed three times. Every slice is
+ * still capped so a burst cannot hit the account limits, and [maxRuns] bounds
+ * one run; whatever is left stays in the pending set for the next one.
+ */
+fun tidyBatches(
+    targets: List<TidyMove>,
+    perRun: Int,
+    maxRuns: Int,
+): List<List<TidyMove>> {
+    if (perRun <= 0 || maxRuns <= 0) return emptyList()
+    return targets.chunked(perRun).take(maxRuns)
+}

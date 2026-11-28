@@ -5,7 +5,6 @@ import com.unlimitedcloud.log.logDiagnostic
 import com.unlimitedcloud.platform.UploadThumbnail
 import com.unlimitedcloud.tdjson.TdJsonSession
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -452,33 +451,47 @@ class CloudFileRepository(private val session: TdJsonSession) {
     }
 
     private suspend fun awaitUploadComplete(fileId: Int, onProgress: (Float?) -> Unit) {
-        withTimeout(UPLOAD_TIMEOUT_MILLIS) {
-            while (true) {
-                val file = session.call(
-                    buildJsonObject {
-                        put("@type", "getFile")
-                        put("file_id", fileId)
-                    },
-                )
-                requireOk(file)
+        // A fixed fifteen minute budget failed large files on slow connections
+        // while TDLib was still sending. Watch the progress itself instead, the
+        // same way downloads do: a transfer that keeps growing may run as long
+        // as it needs, and one that stops moving is reported. The window is wide
+        // because uploads queue behind each other, and a queued file reports no
+        // progress at all until its turn comes.
+        var lastUploaded = -1L
+        var lastProgressAt = TimeSource.Monotonic.markNow()
+        while (true) {
+            val file = session.call(
+                buildJsonObject {
+                    put("@type", "getFile")
+                    put("file_id", fileId)
+                },
+            )
+            requireOk(file)
 
-                val size = file["size"]?.jsonPrimitive?.longOrNull ?: 0L
-                val remote = file["remote"]?.jsonObject
-                val uploaded = remote?.get("uploaded_size")?.jsonPrimitive?.longOrNull ?: 0L
-                onProgress(
-                    if (size > 0L) {
-                        (uploaded.toFloat() / size.toFloat()).coerceIn(0f, 1f)
-                    } else {
-                        null
-                    },
-                )
+            val size = file["size"]?.jsonPrimitive?.longOrNull ?: 0L
+            val remote = file["remote"]?.jsonObject
+            val uploaded = remote?.get("uploaded_size")?.jsonPrimitive?.longOrNull ?: 0L
+            onProgress(
+                if (size > 0L) {
+                    (uploaded.toFloat() / size.toFloat()).coerceIn(0f, 1f)
+                } else {
+                    null
+                },
+            )
 
-                if (remote?.get("is_uploading_completed")?.jsonPrimitive?.booleanOrNull == true) {
-                    onProgress(1f)
-                    return@withTimeout
-                }
-                delay(PROGRESS_POLL_MILLIS)
+            if (remote?.get("is_uploading_completed")?.jsonPrimitive?.booleanOrNull == true) {
+                onProgress(1f)
+                return
             }
+
+            if (uploaded != lastUploaded) {
+                lastUploaded = uploaded
+                lastProgressAt = TimeSource.Monotonic.markNow()
+            } else if (lastProgressAt.elapsedNow() > UPLOAD_STALL_TIMEOUT) {
+                error("Unggahan berhenti merespons. Periksa koneksi lalu coba lagi.")
+            }
+
+            delay(PROGRESS_POLL_MILLIS)
         }
     }
 
@@ -544,7 +557,6 @@ class CloudFileRepository(private val session: TdJsonSession) {
     private companion object {
         const val PAGE_SIZE = 50
         const val THUMBNAIL_TIMEOUT_MILLIS = 20_000L
-        const val UPLOAD_TIMEOUT_MILLIS = 900_000L
         const val POLL_INTERVAL_MILLIS = 750L
         const val PROGRESS_POLL_MILLIS = 500L
 
@@ -553,6 +565,12 @@ class CloudFileRepository(private val session: TdJsonSession) {
 
         /** A download that stops growing for this long is treated as broken. */
         val DOWNLOAD_STALL_TIMEOUT = 5.minutes
+
+        /**
+         * The same for uploads, wider because a queued file reports nothing
+         * until the transfer in front of it has finished.
+         */
+        val UPLOAD_STALL_TIMEOUT = 30.minutes
     }
 }
 

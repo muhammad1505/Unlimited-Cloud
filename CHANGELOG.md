@@ -21,6 +21,20 @@ Semua perubahan yang dirasakan pengguna dicatat di sini. Format setiap rilis:
 setelah pembaruan, dan catatan rilis GitHub selalu berasal dari teks yang sama.
 Bump versi dengan `python3 scripts/bump-version.py <versi>`.
 
+## 1.6.0 — 28 November 2026
+
+### Perbaikan
+
+- Sinkron folder kini benar-benar menyusuri seluruh isi folder: batas 4.000 berkas yang dulu dihitung sebelum berkas yang sudah tersinkron dibuang tidak lagi menyembunyikan sisa berkas, jadi folder besar akhirnya selesai terunggah. Jumlah berkas yang menunggu dan perkiraan waktunya juga dihitung dengan aturan yang sama.
+- Folder yang izinnya dicabut atau tidak bisa dibaca dilaporkan sebagai kegagalan, bukan tampil seperti folder kosong, sehingga sinkron tidak lagi diam-diam melewatinya.
+- Rapikan berkas lama memproses seluruh berkas dalam satu putaran (irisan 40 berkas dengan jeda antar-irisan), jadi riwayat berisi ratusan berkas tidak perlu dirapikan dengan menekan tombolnya berulang kali.
+- Bila riwayat grup sangat besar dan belum seluruhnya termuat, aplikasi mengatakannya dan melanjutkan dari halaman terakhir saat tombol Rapikan ditekan lagi, bukan mengklaim tidak ada berkas lama.
+- Unggahan tidak lagi gagal begitu saja setelah 15 menit: batasnya kini mengikuti kemajuan berkas (30 menit tanpa kemajuan), seperti unduhan, sehingga berkas besar di koneksi lambat tetap selesai.
+- Beberapa transfer yang berjalan bersamaan tidak lagi saling mematikan penjagaan proses: layanan latar depan baru berhenti setelah batch terakhir selesai.
+- Grup penyimpanan tidak lagi mungkin dibuat dua kali saat beberapa bagian aplikasi memintanya pada waktu yang sama.
+- Pratinjau PDF hanya merender halaman yang sedang terlihat, bukan 40 halaman sekaligus pada lebar 1440 px, sehingga membuka PDF besar tidak lagi menghabiskan ratusan MB memori.
+- Menutup sesi Telegram kini langsung menggagalkan permintaan yang masih menunggu, bukan menunggu hingga 20 detik.
+
 ## 1.5.1 — 27 November 2026
 
 ### Perbaikan

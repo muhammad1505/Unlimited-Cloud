@@ -26,6 +26,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlin.concurrent.Volatile
 
 /**
  * Owns the TDLib receive loop and correlates requests with their responses.
@@ -61,6 +62,16 @@ class TdJsonSession(
 
     private val lock = Mutex()
     private val pending = mutableMapOf<String, CompletableDeferred<JsonObject>>()
+
+    /**
+     * A copy of the waiting requests, published under [lock].
+     *
+     * [stop] fails these without taking the lock: a send stuck in the native
+     * can hold it, and every caller then sat out its full request timeout
+     * instead of being cancelled right away.
+     */
+    @Volatile
+    private var waiting: List<CompletableDeferred<JsonObject>> = emptyList()
     private var counter = 0L
     private var receiver: Job? = null
 
@@ -154,7 +165,10 @@ class TdJsonSession(
     suspend fun call(request: JsonObject, timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS): JsonObject {
         val extra = lock.withLock { "uc-${++counter}" }
         val deferred = CompletableDeferred<JsonObject>()
-        lock.withLock { pending[extra] = deferred }
+        lock.withLock {
+            pending[extra] = deferred
+            waiting = waiting + deferred
+        }
         val payload = buildJsonObject {
             request.forEach { (key, value) -> put(key, value) }
             put("@extra", JsonPrimitive(extra))
@@ -171,7 +185,10 @@ class TdJsonSession(
             }
             response
         } finally {
-            lock.withLock { pending.remove(extra) }
+            lock.withLock {
+                pending.remove(extra)
+                waiting = waiting - deferred
+            }
         }
     }
 
@@ -182,16 +199,10 @@ class TdJsonSession(
         closed = true
 
         // Callers used to hang for the full request timeout when the session
-        // stopped mid-request; fail them right away instead.
-        val abandoned = if (lock.tryLock()) {
-            try {
-                pending.values.toList().also { pending.clear() }
-            } finally {
-                lock.unlock()
-            }
-        } else {
-            emptyList()
-        }
+        // stopped mid-request; fail them right away instead. The published list
+        // needs no lock, so this never waits behind a send in the native.
+        val abandoned = waiting
+        waiting = emptyList()
         abandoned.forEach { deferred ->
             deferred.completeExceptionally(IllegalStateException("Sesi TDLib ditutup"))
         }

@@ -33,12 +33,15 @@ private object DesktopGallerySyncSource : GallerySyncSource {
         val files = root.walkTopDown()
             .maxDepth(MAX_DEPTH)
             .filter { file -> file.isFile && file.canRead() }
-            .take(MAX_SCAN)
+            // The synced filter runs before the cut: cutting the walk at 4.000
+            // files hid every file behind 4.000 already-synced ones, so the rest
+            // of the folder never got its turn.
+            .filter { file -> file.absolutePath !in alreadySynced }
+            .take(MAX_CANDIDATES)
             // Newest first, like the Android source: a folder keeps growing at
             // the bottom, and the files the user just copied are the ones worth
             // syncing first.
             .sortedByDescending { file -> file.lastModified() }
-            .filter { file -> file.absolutePath !in alreadySynced }
             .take(limit)
             .map { file ->
                 GalleryFile(
@@ -68,7 +71,9 @@ private object DesktopGallerySyncSource : GallerySyncSource {
         if (!root.isDirectory) return@withContext 0
         root.walkTopDown()
             .maxDepth(MAX_DEPTH)
-            .take(MAX_SCAN)
+            // Only the safety budget on inspected entries stays: the old cut on
+            // pending files made the count stop at 4.000 and the ETA lie.
+            .take(MAX_INSPECTED)
             .count { file -> file.isFile && file.canRead() && file.absolutePath !in alreadySynced }
     }
 
@@ -77,8 +82,11 @@ private object DesktopGallerySyncSource : GallerySyncSource {
 
     private const val MAX_DEPTH = 16
 
-    /** Files inspected per batch; the sync repeats until the folder is done. */
-    private const val MAX_SCAN = 4_000
+    /** Pending files one batch may collect; the next run picks up the rest. */
+    private const val MAX_CANDIDATES = 4_000
+
+    /** Entries inspected per batch, synced or not, so a walk always ends. */
+    private const val MAX_INSPECTED = 20_000
 }
 
 @Composable

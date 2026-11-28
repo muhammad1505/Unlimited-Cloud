@@ -10,12 +10,14 @@ import android.widget.MediaController
 import android.widget.VideoView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -199,10 +201,12 @@ private fun AudioPreview(path: String, modifier: Modifier) {
 
 @Composable
 private fun PdfPreview(path: String, modifier: Modifier) {
-    val pages by produceState<List<ImageBitmap>?>(initialValue = null, key1 = path) {
-        value = withContext(Dispatchers.IO) { renderPdfPages(path) }
+    // Only the page count is read up front; every page renders itself when the
+    // list reaches it.
+    val info by produceState<PdfInfo?>(initialValue = null, key1 = path) {
+        value = withContext(Dispatchers.IO) { pdfInfo(path) }
     }
-    val rendered = pages
+    val rendered = info
 
     when {
         rendered == null -> Column(
@@ -218,7 +222,7 @@ private fun PdfPreview(path: String, modifier: Modifier) {
             )
         }
 
-        rendered.isEmpty() -> PlatformPreviewMessage(
+        rendered.shownPages == 0 -> PlatformPreviewMessage(
             text = "PDF ini tidak bisa ditampilkan. Unduh untuk membukanya di aplikasi lain.",
             modifier = modifier,
         )
@@ -227,15 +231,49 @@ private fun PdfPreview(path: String, modifier: Modifier) {
             modifier = modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(rendered) { page ->
-                Image(
-                    bitmap = page,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentScale = ContentScale.FillWidth,
-                )
+            items(rendered.shownPages) { index -> PdfPage(path, index) }
+            if (rendered.totalPages > rendered.shownPages) {
+                item {
+                    Text(
+                        text = "Menampilkan ${rendered.shownPages} dari " +
+                            "${rendered.totalPages} halaman. Unduh untuk membuka semuanya.",
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
         }
+    }
+}
+
+/**
+ * One page of the document. Only the pages the list actually shows are
+ * rendered: the preview used to decode 40 pages at 1440 px before the first one
+ * became visible, which cost hundreds of megabytes of bitmaps for a file the
+ * user may never scroll through.
+ */
+@Composable
+private fun PdfPage(path: String, index: Int) {
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, key1 = path, key2 = index) {
+        value = withContext(Dispatchers.IO) { renderPdfPage(path, index) }
+    }
+    val page = bitmap
+    if (page == null) {
+        Box(
+            modifier = Modifier.fillMaxWidth().height(240.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator(modifier = Modifier.size(20.dp))
+        }
+    } else {
+        Image(
+            bitmap = page,
+            contentDescription = null,
+            modifier = Modifier.fillMaxWidth(),
+            contentScale = ContentScale.FillWidth,
+        )
     }
 }
 
@@ -250,31 +288,46 @@ private fun PlatformPreviewMessage(text: String, modifier: Modifier) {
     )
 }
 
-private fun renderPdfPages(path: String): List<ImageBitmap> = runCatching {
+private data class PdfInfo(val shownPages: Int, val totalPages: Int)
+
+/** Page count of the document, capped to what the preview is willing to show. */
+private fun pdfInfo(path: String): PdfInfo? = runCatching {
     val file = File(path)
-    if (!file.isFile) return@runCatching emptyList()
+    if (!file.isFile) return@runCatching null
 
     ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
         PdfRenderer(descriptor).use { renderer ->
-            val pages = mutableListOf<ImageBitmap>()
-            val count = renderer.pageCount.coerceAtMost(MAX_PDF_PAGES)
-            for (index in 0 until count) {
-                renderer.openPage(index).use { page ->
-                    val scale = (PDF_RENDER_WIDTH.toFloat() / page.width.coerceAtLeast(1))
-                        .coerceAtMost(2f)
-                    val bitmap = Bitmap.createBitmap(
-                        (page.width * scale).toInt().coerceAtLeast(1),
-                        (page.height * scale).toInt().coerceAtLeast(1),
-                        Bitmap.Config.ARGB_8888,
-                    )
-                    // PdfRenderer leaves untouched pixels transparent, which reads as
-                    // black pages in dark mode, so the page starts white.
-                    bitmap.eraseColor(Color.WHITE)
-                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    pages.add(bitmap.asImageBitmap())
-                }
-            }
-            pages
+            val total = renderer.pageCount
+            PdfInfo(shownPages = total.coerceAtMost(MAX_PDF_PAGES), totalPages = total)
         }
     }
-}.getOrDefault(emptyList())
+}.getOrNull()
+
+/**
+ * Renders one page. A renderer is opened per page because PdfRenderer is not
+ * thread safe and the list may scroll while the previous page still draws.
+ */
+private fun renderPdfPage(path: String, index: Int): ImageBitmap? = runCatching {
+    val file = File(path)
+    if (!file.isFile) return@runCatching null
+
+    ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+        PdfRenderer(descriptor).use { renderer ->
+            if (index !in 0 until renderer.pageCount) return@runCatching null
+            renderer.openPage(index).use { page ->
+                val scale = (PDF_RENDER_WIDTH.toFloat() / page.width.coerceAtLeast(1))
+                    .coerceAtMost(2f)
+                val bitmap = Bitmap.createBitmap(
+                    (page.width * scale).toInt().coerceAtLeast(1),
+                    (page.height * scale).toInt().coerceAtLeast(1),
+                    Bitmap.Config.ARGB_8888,
+                )
+                // PdfRenderer leaves untouched pixels transparent, which reads as
+                // black pages in dark mode, so the page starts white.
+                bitmap.eraseColor(Color.WHITE)
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                bitmap.asImageBitmap()
+            }
+        }
+    }
+}.getOrNull()

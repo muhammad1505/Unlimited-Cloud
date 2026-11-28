@@ -519,11 +519,13 @@ class CloudFilesViewModel(
             }
             // Every page has to be in memory, otherwise files on pages that were
             // never scrolled to would be left behind and the count would be wrong.
+            var historyComplete = true
             if (!isHistoryComplete(state.value)) {
                 state.update {
                     it.copy(tidying = true, status = "Memuat seluruh daftar berkas…", error = null)
                 }
-                val failure = runCatching { completeHistory(chatId) }.exceptionOrNull()
+                val loaded = runCatching { completeHistory(chatId) }
+                val failure = loaded.exceptionOrNull()
                 if (failure != null) {
                     state.update {
                         it.copy(
@@ -534,28 +536,54 @@ class CloudFilesViewModel(
                     }
                     return@launch
                 }
+                historyComplete = loaded.getOrDefault(false)
             }
-            runTidy(chatId, tidyEverything = true, manual = true)
+            runTidy(
+                chatId = chatId,
+                tidyEverything = true,
+                manual = true,
+                historyComplete = historyComplete,
+            )
         }
     }
 
-    /** Loads the remaining history pages so a manual tidy sees every file. */
-    private suspend fun completeHistory(chatId: Long) {
+    /**
+     * Loads the remaining history pages so a manual tidy sees every file.
+     *
+     * @return true when the end of the history was reached. A very large group
+     * stops at [MAX_COMPLETE_PAGES], and the cursor is kept, so pressing the
+     * button again continues from there instead of loading the same pages again.
+     */
+    private suspend fun completeHistory(chatId: Long): Boolean {
         // The button can be pressed before the explorer ever loaded a page.
         if (state.value.files.isEmpty() && state.value.nextFromMessageId == null) {
             val first = loadPage(chatId)
             applyPage(first, replace = true, moreToLoad = first.nextFromMessageId != null)
         }
         var pages = 0
+        var stalled = false
         var cursor = state.value.nextFromMessageId
         while (cursor != null && pages < MAX_COMPLETE_PAGES) {
             val page = loadPage(chatId, cursor)
             pages++
             applyPage(page, replace = false, moreToLoad = page.nextFromMessageId != null)
             val next = page.nextFromMessageId
-            // A cursor that does not advance would page the same slice forever.
-            cursor = if (next == cursor) null else next
+            // A cursor that does not advance would page the same slice forever,
+            // and the history is then not known to be complete either.
+            if (next == cursor) {
+                stalled = true
+                cursor = null
+            } else {
+                cursor = next
+            }
         }
+        if (cursor != null || stalled) {
+            logDiagnostic(
+                LOG_TAG,
+                "riwayat belum habis setelah $pages halaman; sisanya menyusul",
+            )
+        }
+        return cursor == null && !stalled
     }
 
     private fun launchTidy(chatId: Long, tidyEverything: Boolean, manual: Boolean) {
@@ -568,7 +596,12 @@ class CloudFilesViewModel(
      * after the copy exists. Ids that fail are stored before the pass returns, so
      * the next launch (or the button) picks them up again.
      */
-    private suspend fun runTidy(chatId: Long, tidyEverything: Boolean, manual: Boolean) {
+    private suspend fun runTidy(
+        chatId: Long,
+        tidyEverything: Boolean,
+        manual: Boolean,
+        historyComplete: Boolean = true,
+    ) {
         val pending = preferences.tidyPending()
         val targets = tidyTargets(
             files = state.value.files,
@@ -582,7 +615,14 @@ class CloudFilesViewModel(
             state.update {
                 it.copy(
                     tidying = false,
-                    status = if (manual) "Tidak ada berkas lama yang perlu dirapikan" else it.status,
+                    status = when {
+                        // Saying "nothing to tidy" while pages are still unread
+                        // would claim a clean history the app has not seen.
+                        manual && !historyComplete ->
+                            "Sebagian riwayat belum termuat; tekan Rapikan lagi untuk melanjutkan"
+                        manual -> "Tidak ada berkas lama yang perlu dirapikan"
+                        else -> it.status
+                    },
                 )
             }
             return
@@ -592,29 +632,46 @@ class CloudFilesViewModel(
         // retries the rest instead of leaving those files untracked.
         val remaining = targets.mapTo(mutableSetOf<Long>()) { it.file.messageId }
         preferences.setTidyPending(remaining)
-        // A forward + delete per file is slow and Telegram throttles bursts, so a
-        // pass moves a slice; the rest stays in tidyPending and is picked up by
-        // the next launch instead of flooding the account.
-        val batch = targets.take(MAX_TIDY_PER_PASS)
-        logDiagnostic(LOG_TAG, "rapikan: ${targets.size} berkas, ${batch.size} diproses sekarang")
+        // A forward + delete per file is slow and Telegram throttles bursts, so
+        // the run moves a slice at a time and pauses between slices. The slices
+        // happen in one run now: the rest of a 100 file history used to wait for
+        // the next launch or another press of the button.
+        val batches = tidyBatches(targets, MAX_TIDY_PER_PASS, MAX_TIDY_RUNS)
+        logDiagnostic(
+            LOG_TAG,
+            "rapikan: ${targets.size} berkas dalam ${batches.size} putaran",
+        )
         state.update {
             it.copy(tidying = true, status = "Merapikan ${targets.size} berkas lama…", error = null)
         }
 
         var moved = 0
         val failed = mutableSetOf<Long>()
-        batch.forEach { move ->
-            val ok = runCatching {
-                repository.moveToTypeTopic(chatId, move.file.messageId, move.folder)
-            }.getOrDefault(false)
-            if (ok) {
-                moved++
-                remaining -= move.file.messageId
-            } else {
-                failed += move.file.messageId
+        for ((index, batch) in batches.withIndex()) {
+            if (index > 0) {
+                delay(TIDY_PAUSE_MILLIS)
+                state.update {
+                    it.copy(status = "Merapikan berkas lama… $moved/${targets.size}")
+                }
             }
+            var movedInBatch = 0
+            batch.forEach { move ->
+                val ok = runCatching {
+                    repository.moveToTypeTopic(chatId, move.file.messageId, move.folder)
+                }.getOrDefault(false)
+                if (ok) {
+                    moved++
+                    movedInBatch++
+                    remaining -= move.file.messageId
+                } else {
+                    failed += move.file.messageId
+                }
+            }
+            // A slice where nothing at all moved means the account refuses the
+            // rest too (flood wait, missing rights); stop instead of hammering.
+            preferences.setTidyPending(remaining)
+            if (movedInBatch == 0) break
         }
-        preferences.setTidyPending(remaining)
         logDiagnostic(LOG_TAG, "rapikan selesai: $moved dipindah, ${failed.size} gagal")
         state.update {
             it.copy(
@@ -1806,8 +1863,11 @@ class CloudFilesViewModel(
                             LOG_TAG,
                             "galeri ${folder.name} gagal dibaca: ${failure.message}",
                         )
-                        GalleryBatch()
-                    }
+                        // A folder that cannot be read will not heal inside this
+                        // run, so it is left to the next sync instead of being
+                        // retried until the per-folder limit.
+                        null
+                    } ?: break
                     // Skipped keys are not retried inside this run: the budget
                     // shrinks as files are copied, so a second attempt would
                     // read the same unreadable document again. The next sync
@@ -2149,8 +2209,14 @@ class CloudFilesViewModel(
         const val MAX_GALLERY_ATTEMPTS = 3
         const val MAX_COMPLETE_PAGES = 500
 
-        /** Moves per tidy pass; the rest waits for the next one. */
+        /** Moves per tidy slice, so a burst stays under the account limits. */
         const val MAX_TIDY_PER_PASS = 40
+
+        /** Slices one tidy run may send before the rest waits for the next run. */
+        const val MAX_TIDY_RUNS = 10
+
+        /** Pause between slices, long enough for Telegram to forget the burst. */
+        const val TIDY_PAUSE_MILLIS = 2_000L
         const val MAX_COVER_CACHE_ENTRIES = 500
         const val MAX_PREVIEW_CACHE_ENTRIES = 12
     }

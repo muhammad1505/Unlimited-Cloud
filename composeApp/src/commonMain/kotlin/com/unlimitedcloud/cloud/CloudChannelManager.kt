@@ -10,6 +10,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -100,6 +102,13 @@ class CloudChannelManager(
     private val topics = ForumTopics(session)
     private var cachedChatId: Long? = null
 
+    /**
+     * Serialises resolution. Two callers arriving together (the explorer, the
+     * gallery sync and the settings card all ask) used to run the whole search
+     * and creation path twice, which could create a second storage group.
+     */
+    private val resolveLock = Mutex()
+
     /** Icon, mute, archive and description are applied once per session. */
     private var presentationApplied = false
 
@@ -117,7 +126,9 @@ class CloudChannelManager(
         state.value = CloudChannelState.Idle
     }
 
-    suspend fun ensureRootChannel(): Long? {
+    suspend fun ensureRootChannel(): Long? = resolveLock.withLock { resolveRootChannel() }
+
+    private suspend fun resolveRootChannel(): Long? {
         cachedChatId?.let { return it }
 
         state.value = CloudChannelState.Resolving

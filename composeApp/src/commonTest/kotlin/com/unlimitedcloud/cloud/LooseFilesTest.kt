@@ -117,6 +117,31 @@ class LooseFilesTest {
     }
 
     @Test
+    fun oneTidyRunKeepsGoingUntilEverySliceIsDone() {
+        val targets = (1L..100L).map { id ->
+            TidyMove(file(id, "lama.jpg", "Kerja"), FileCategories.PHOTOS)
+        }
+
+        val batches = tidyBatches(targets, perRun = 40, maxRuns = 10)
+
+        assertEquals(listOf(40, 40, 20), batches.map { it.size })
+        assertEquals(100, batches.flatten().map { it.file.messageId }.distinct().size)
+    }
+
+    @Test
+    fun aTidyRunStopsAtItsSliceBudget() {
+        val targets = (1L..1_000L).map { id ->
+            TidyMove(file(id, "lama.jpg", "Kerja"), FileCategories.PHOTOS)
+        }
+
+        val batches = tidyBatches(targets, perRun = 40, maxRuns = 2)
+
+        assertEquals(listOf(40, 40), batches.map { it.size })
+        assertTrue(tidyBatches(emptyList(), perRun = 40, maxRuns = 10).isEmpty())
+        assertTrue(tidyBatches(targets, perRun = 0, maxRuns = 10).isEmpty())
+    }
+
+    @Test
     fun galleryUploadsStayWhenAutomaticTopicsAreOff() {
         val files = listOf(file(1, "liburan.mp4", folder = FileCategories.GALLERY))
 

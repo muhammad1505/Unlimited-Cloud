@@ -44,6 +44,13 @@ kasus native ada tetapi jaringan/TDLib tidak merespons.
 - Desktop: JNA ke `libtdjson`/`tdjson.dll` yang dibundel di resources paket
   (diambil `scripts/fetch-tdlib-desktop.sh`).
 
+`stop()` menggagalkan setiap permintaan yang masih menunggu lewat daftar `waiting`
+yang diterbitkan di bawah lock, jadi pembatalan tidak tertahan bila sebuah `send`
+macet di native (dulu `tryLock` yang gagal membuat pemanggil menunggu sampai 20
+detik). `CloudChannelManager.ensureRootChannel()` diserialkan dengan `Mutex`,
+sehingga explorer, sinkron folder, dan kartu Pengaturan yang meminta pada waktu
+bersamaan tidak menjalankan pencarian dan pembuatan grup dua kali.
+
 ## Model penyimpanan
 
 Channel pribadi adalah database sekaligus filesystem:
@@ -97,7 +104,11 @@ Channel pribadi adalah database sekaligus filesystem:
   `inputFileLocal`. Jangan mengganti `inputDocument` dengan `inputFileLocal` di
   posisi itu; TDLib akan menolak dengan pesan menyesatkan
   `InputFile is not specified`.
-- Progres unggah dibaca dari `remote.uploaded_size` / `size`.
+- Progres unggah dibaca dari `remote.uploaded_size` / `size`. Sama seperti
+  unduhan, unggahan tidak punya batas waktu tetap: ia baru digagalkan bila
+  `uploaded_size` tidak bergerak selama 30 menit (`UPLOAD_STALL_TIMEOUT`),
+  jendela yang lebar karena berkas yang mengantre di belakang unggahan lain
+  memang melaporkan nol progres sampai gilirannya tiba.
 - Unduh memanggil `downloadFile`, lalu mem-poll `getFile` sampai
   `local.is_downloading_completed`. Tidak ada batas waktu tetap: unduhan yang
   terus bertambah boleh berjalan, dan baru digagalkan bila tidak ada progres
@@ -151,8 +162,12 @@ selalu ditentukan ekstensinya (`FileCategories.folderFor`), dan setiap path yang
 diawali topik bawaan aplikasi (`FileCategories.generatedTopicOf`: Foto, Video,
 …, termasuk "Galeri" warisan folder sync) dipindahkan ke topik jenisnya dengan
 subfolder dipertahankan — jadi video yang salah nyangkut di Foto ikut pindah ke
-Video. Folder yang dinamai pengguna sendiri tidak pernah disentuh. Putaran
-dibatasi `MAX_TIDY_PER_PASS` dan sisanya disimpan di `cloud.tidyPending`.
+Video. Folder yang dinamai pengguna sendiri tidak pernah disentuh. Satu putaran
+berjalan dalam irisan `MAX_TIDY_PER_PASS` berkas dengan jeda antar-irisan,
+maksimal `MAX_TIDY_RUNS` irisan (`tidyBatches`), dan sisanya disimpan di
+`cloud.tidyPending`. Bila riwayat belum habis setelah `MAX_COMPLETE_PAGES`,
+`completeHistory` mengembalikan `false`, kursor disimpan sehingga tombol
+Rapikan berikutnya melanjutkan, dan status tidak mengklaim daftar sudah bersih.
 
 Notifikasi progres memakai satu notifikasi yang sama dengan `TransferService`,
 tetapi kini membawa fraksi batch (`TransferNotifier.progress(..., fraction)`) dan
@@ -169,7 +184,9 @@ Batch transfer tidak lagi bergantung pada umur Activity: dijalankan lewat
 `launchBatch`, yang memanggil `TransferSession.begin()`/`end()`. Di Android
 `TransferSession` menyalakan `TransferService` (`foregroundServiceType="dataSync"`)
 selama batch berjalan, sehingga proses tetap hidup walau aplikasi dihapus dari
-daftar terbaru. Service memakai id notifikasi yang sama dengan notifier, jadi
+daftar terbaru. Sesi itu dibuat per pemanggil, jadi jumlah batch aktif disimpan
+sebagai penghitung proses: service hanya dimatikan setelah batch terakhir
+selesai, bukan oleh batch pertama yang kebetulan lebih dulu rampung. Service memakai id notifikasi yang sama dengan notifier, jadi
 progres tetap satu entri dan ikut hilang bila service berhenti; notifikasi sisa
 proses lama dibersihkan di `init` ViewModel. Desktop memakai implementasi kosong.
 
@@ -240,8 +257,11 @@ dari manifest bersama receiver diagnostik/profile-installer yang membawa penanda
 Desktop memakai kontrak `GallerySyncSource` yang sama: folder yang dipilih adalah
 direktori biasa, `id`-nya path absolut, kuncinya path absolut setiap berkas, dan
 berkas diunggah langsung dari tempatnya (tanpa salinan cache, jadi `release()`
-no-op). Pemindaian dibatasi 4.000 berkas dan 16 tingkat kedalaman per batch, sama
-seperti Android. `GalleryBackgroundSync` tetap `supported = false` di desktop karena
+no-op). Sama seperti Android, penyaringan berkas yang sudah tersinkron terjadi
+di dalam penelusuran, bukan setelah pemotongan: yang dibatasi adalah 4.000 berkas
+menunggu (`MAX_CANDIDATES`) dan 20.000 entri yang diperiksa per batch
+(`MAX_INSPECTED`), dengan kedalaman 16 tingkat, sehingga folder besar tetap
+selesai pada batch-batch berikutnya. `GalleryBackgroundSync` tetap `supported = false` di desktop karena
 tidak ada penjadwal sistem; sinkron otomatis berjalan saat aplikasi dibuka.
 
 Transfer berjalan lewat kumpulan worker (`Channel` + `coroutineScope`). Jumlahnya

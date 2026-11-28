@@ -10,6 +10,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import com.unlimitedcloud.log.LOG_TAG
+import com.unlimitedcloud.log.logDiagnostic
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -38,11 +40,7 @@ private class AndroidGallerySyncSource(
         limit: Int,
     ): GalleryBatch = withContext(Dispatchers.IO) {
         clearStaleCache()
-        val treeUri = runCatching { Uri.parse(folder.id) }.getOrNull()
-            ?: return@withContext GalleryBatch()
-        val rootDocumentId = runCatching {
-            DocumentsContract.getTreeDocumentId(treeUri)
-        }.getOrNull() ?: return@withContext GalleryBatch()
+        val (treeUri, rootDocumentId) = treeOf(folder)
 
         val cacheDirectory = File(context.cacheDir, "gallery-sync").apply { mkdirs() }
         // Every picked document is copied before TDLib can read it, so one folder
@@ -52,22 +50,27 @@ private class AndroidGallerySyncSource(
         var remainingBytes = cacheBudget(cacheDirectory)
         val skipped = mutableListOf<String>()
 
-        val files = collectDocuments(
+        // The filter runs inside the walk: a fixed cut on *documents* used to
+        // hide every newer file behind 4.000 already-synced ones, so the rest
+        // of the folder never got its turn.
+        val scan = Scan(limit = MAX_CANDIDATES) { document ->
+            val key = document.documentId
+            key !in alreadySynced && "${document.name}|$key" !in alreadySynced
+        }
+        collectDocuments(
             treeUri = treeUri,
             parentDocumentId = rootDocumentId,
             relativeDirectory = "",
             depth = 0,
-            budget = MAX_SCAN,
+            scan = scan,
         )
+
+        val files = scan.documents
             .asSequence()
             .sortedByDescending { it.lastModified }
             // take(limit) comes before the copy: mapping first copied every
             // scanned file of the folder for each batch, then uploaded a handful
             // and deleted the rest again.
-            .filter { document ->
-                val key = document.documentId
-                key !in alreadySynced && "${document.name}|$key" !in alreadySynced
-            }
             .take(limit)
             .mapNotNull { document ->
                 if (document.size > remainingBytes) {
@@ -103,21 +106,38 @@ private class AndroidGallerySyncSource(
         folder: GalleryFolder,
         alreadySynced: Set<String>,
     ): Int = withContext(Dispatchers.IO) {
-        val treeUri = runCatching { Uri.parse(folder.id) }.getOrNull()
-            ?: return@withContext 0
-        val rootDocumentId = runCatching {
-            DocumentsContract.getTreeDocumentId(treeUri)
-        }.getOrNull() ?: return@withContext 0
+        val (treeUri, rootDocumentId) = treeOf(folder)
+        // Counted with the same filter the batch uses, so the banner and the ETA
+        // match what the sync will really upload. Only the budget on inspected
+        // documents can still cut this short, and that is logged.
+        val scan = Scan(limit = Int.MAX_VALUE) { document ->
+            document.documentId !in alreadySynced &&
+                "${document.name}|${document.documentId}" !in alreadySynced
+        }
         collectDocuments(
             treeUri = treeUri,
             parentDocumentId = rootDocumentId,
             relativeDirectory = "",
             depth = 0,
-            budget = MAX_SCAN,
-        ).count { document ->
-            document.documentId !in alreadySynced &&
-                "${document.name}|${document.documentId}" !in alreadySynced
+            scan = scan,
+        )
+        if (scan.exhausted) {
+            logDiagnostic(
+                LOG_TAG,
+                "sinkron: hitungan berkas menunggu dipotong di ${scan.inspected} dokumen",
+            )
         }
+        scan.documents.size
+    }
+
+    /** The picked tree, or a failure the sync can report instead of "empty". */
+    private fun treeOf(folder: GalleryFolder): Pair<Uri, String> {
+        val uri = runCatching { Uri.parse(folder.id) }.getOrNull()
+            ?: error("Folder sinkron tidak bisa dibaca")
+        val rootDocumentId = runCatching {
+            DocumentsContract.getTreeDocumentId(uri)
+        }.getOrNull() ?: error("Folder sinkron tidak bisa dibaca")
+        return uri to rootDocumentId
     }
 
     /**
@@ -135,72 +155,85 @@ private class AndroidGallerySyncSource(
         files.forEach { file -> runCatching { File(file.localPath).delete() } }
     }
 
+    /**
+     * Walks the picked tree, handing every document to [scan].
+     *
+     * A document the scan rejects still costs inspection budget, so synced
+     * files cannot make a batch look empty. [Scan.hasRoom] bounds both the work
+     * (inspected documents) and the collected ones, so a huge folder is read in
+     * slices the next run continues instead of being cut off for good.
+     *
+     * A failure on the root tree is thrown: an unreadable folder looked exactly
+     * like an empty one, and the sync silently uploaded nothing. A broken
+     * subfolder is logged and skipped so one bad directory cannot stop the rest.
+     */
     private fun collectDocuments(
         treeUri: Uri,
         parentDocumentId: String,
         relativeDirectory: String,
         depth: Int,
-        budget: Int,
-    ): List<ScannedDocument> {
-        if (depth > MAX_DEPTH || budget <= 0) return emptyList()
+        scan: Scan,
+    ) {
+        if (depth > MAX_DEPTH || !scan.hasRoom()) return
 
-        val childrenUri = runCatching {
-            DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocumentId)
-        }.getOrNull() ?: return emptyList()
-
-        val documents = mutableListOf<ScannedDocument>()
-        var remaining = budget
-
-        runCatching {
-            context.contentResolver.query(
-                childrenUri,
-                arrayOf(
-                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                    DocumentsContract.Document.COLUMN_MIME_TYPE,
-                    DocumentsContract.Document.COLUMN_SIZE,
-                    DocumentsContract.Document.COLUMN_LAST_MODIFIED,
-                ),
-                null,
-                null,
-                null,
-            )?.use { cursor ->
-                while (cursor.moveToNext() && remaining > 0) {
-                    remaining--
-                    val documentId = cursor.getString(0) ?: continue
-                    val name = cursor.getString(1) ?: continue
-                    val mimeType = cursor.getString(2).orEmpty()
-
-                    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        val childDirectory = name.safeDirectoryName()
-                        val nested = collectDocuments(
-                            treeUri = treeUri,
-                            parentDocumentId = documentId,
-                            relativeDirectory = if (relativeDirectory.isEmpty()) {
-                                childDirectory
-                            } else {
-                                "$relativeDirectory/$childDirectory"
-                            },
-                            depth = depth + 1,
-                            budget = remaining,
-                        )
-                        remaining -= nested.size
-                        documents += nested
-                        continue
-                    }
-
-                    documents += ScannedDocument(
-                        documentId = documentId,
-                        name = name,
-                        size = cursor.getLong(3),
-                        lastModified = cursor.getLong(4),
-                        relativeDirectory = relativeDirectory,
-                    )
-                }
-            }
+        val cursor = try {
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri,
+                parentDocumentId,
+            )
+            context.contentResolver.query(childrenUri, COLUMNS, null, null, null)
+        } catch (failure: Exception) {
+            unreadable(depth, failure)
+            return
+        } ?: run {
+            unreadable(depth, null)
+            return
         }
 
-        return documents
+        cursor.use { rows ->
+            while (rows.moveToNext() && scan.hasRoom()) {
+                scan.inspected++
+                val documentId = rows.getString(0) ?: continue
+                val name = rows.getString(1) ?: continue
+                val mimeType = rows.getString(2).orEmpty()
+
+                if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    val childDirectory = name.safeDirectoryName()
+                    collectDocuments(
+                        treeUri = treeUri,
+                        parentDocumentId = documentId,
+                        relativeDirectory = if (relativeDirectory.isEmpty()) {
+                            childDirectory
+                        } else {
+                            "$relativeDirectory/$childDirectory"
+                        },
+                        depth = depth + 1,
+                        scan = scan,
+                    )
+                    continue
+                }
+
+                scan.offer(
+                    ScannedDocument(
+                        documentId = documentId,
+                        name = name,
+                        size = rows.getLong(3),
+                        lastModified = rows.getLong(4),
+                        relativeDirectory = relativeDirectory,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun unreadable(depth: Int, failure: Exception?) {
+        if (depth == 0) {
+            throw IllegalStateException("Folder sinkron tidak bisa dibaca", failure)
+        }
+        logDiagnostic(
+            LOG_TAG,
+            "sinkron: subfolder dilewati (${failure?.message ?: "tanpa keterangan"})",
+        )
     }
 
     private fun copyToCache(
@@ -243,12 +276,37 @@ private class AndroidGallerySyncSource(
         val relativeDirectory: String,
     )
 
+    /**
+     * Budget of one tree walk. [inspected] counts every row the cursor returned
+     * and [documents] only the pending ones, capped by [limit].
+     */
+    private class Scan(
+        private val limit: Int,
+        private val accept: (ScannedDocument) -> Boolean,
+    ) {
+        var inspected = 0
+        val documents = mutableListOf<ScannedDocument>()
+        val exhausted: Boolean get() = inspected >= MAX_INSPECTED
+
+        fun hasRoom(): Boolean = inspected < MAX_INSPECTED && documents.size < limit
+
+        fun offer(document: ScannedDocument) {
+            if (accept(document)) documents += document
+        }
+    }
+
     private companion object {
         /** Deep enough for real folder trees, which used to stop at three levels. */
         const val MAX_DEPTH = 16
 
-        /** Documents scanned per batch; the sync repeats until nothing is left. */
-        const val MAX_SCAN = 4_000
+        /** Columns read from the provider for every document of the tree. */
+        val COLUMNS = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+        )
 
         /** Copies older than this were left behind by a killed sync. */
         const val STALE_CACHE_MILLIS = 2L * 60 * 60 * 1000
@@ -257,6 +315,12 @@ private class AndroidGallerySyncSource(
         const val FALLBACK_CACHE_BYTES = 512L * 1024 * 1024
     }
 }
+
+/** Pending documents one batch may collect; the next run picks up the rest. */
+private const val MAX_CANDIDATES = 4_000
+
+/** Documents inspected per batch, synced or not, so a walk always ends. */
+private const val MAX_INSPECTED = 20_000
 
 private fun String.safeDirectoryName(): String =
     substringAfterLast('/').substringAfterLast('\\').replace(':', '_').ifBlank { "folder" }
